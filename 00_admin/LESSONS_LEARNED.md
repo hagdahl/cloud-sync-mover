@@ -26,3 +26,10 @@ Append-only. Nyast överst. Destillerat och avidentifierat ur två skarpa flytta
 - Bevara FoD — materialisera aldrig allt.
 - Källan är rollback-baslinjen tills synken bevisats stabil i flera dygn.
 - Långkörande filoperationer startas frånkopplat så en brygg-timeout inte avbryter mitt i.
+
+### Operativa/diagnostik-mönster (2026-07, destillerade)
+
+- **Frikopplade långjobb + marker-filer, inte strömmad utdata.** Stora enumereringar/hashningar över en synkad yta timar ut i en interaktiv brygga och buffras blockvis när utdata går till fil. Mönster (som toolkit-scripten använder): kör frikopplat, skriv `*_progress.txt` löpande och `*_done.json` sist (atomiskt), och polla marker-filen i stället för att vänta på strömmad output.
+- **Riktad sökning, inte rekursiv enum av hela roten.** En full `EnumerateFiles` över den synkade roten kan vara enorm (miljontals online-only-platshållare) och timeout:a när man bara letar efter en fil eller ett konto. Sök riktat mot kända undermappar.
+- **Fri diskyta som framstegs-/tröskelmått.** Under långsam disk (SMR) är antal-räkning trögt; delta i målets upptagna utrymme är ett robust, billigt framstegs- och tröskelmått (grunden för `Watch-TargetGrowth.ps1`).
+- **State-DB-snapshot är stor - städa.** En snapshot kan vara flera GB (DB + stor WAL). Skriv till lokal disk och radera efteråt, annars äter diagnosen upp den disk du försöker frigöra.

@@ -29,3 +29,8 @@ Vilken provider som helst med Files-On-Demand + en inbyggd "byt plats"-funktion 
 |---|---|---|
 | OneDrive | `%LOCALAPPDATA%\Microsoft\OneDrive\logs\<konto>\*.aodl/.odlgz` | `Read-OneDriveLogs.ps1` + `parse_odl.py` |
 | Google Drive | `%LOCALAPPDATA%\Google\DriveFS\Logs\drive_fs.txt` | `Read-GoogleDriveLogs.ps1` |
+
+## OneDrive - diagnostik-noter
+
+- **Felräknaren är inte persisterad.** Klientens "N synkfel" hämtas live av UI:t via ett internt localhost-anrop (`ActivityCenter/getErrors`) och sparas **inte** som en tabell. Det går alltså inte att "dumpa N felrader" från disk - läs synkmotorns tillstånd (`Read-OneDriveSyncState.ps1`) eller skrolla Activity Center-panelen.
+- **Fel kan ligga på ett annat konto.** Ett vilande jobb/skol-konto (`settings\Business1\`) kan bidra till räknaren även om det personliga är rent. `Read-OneDriveSyncState.ps1` / `read_sync_state.py` enumererar därför alla `settings\<konto>`-mappar, inte bara Personal.
