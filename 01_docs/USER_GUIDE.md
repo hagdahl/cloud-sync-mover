@@ -1,5 +1,7 @@
 # USER_GUIDE — köra en flytt steg för steg
 
+> **Varning:** riskfyllda filoperationer - använd på egen risk, ha verifierad backup, kör dry-run först. Se `DISCLAIMER.md`.
+
 > Läs `01_docs/PLAYBOOK.md` först. Detta är den operativa checklistan. Varje destruktivt steg kräver `-Execute`; utan den flaggan är allt dry-run.
 
 ## Förberedelse

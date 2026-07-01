@@ -1,8 +1,10 @@
 # cloud-sync-mover
 
+> **Varning / ansvarsfriskrivning:** detta utför riskfyllda filoperationer på molnsynkade data. Använd helt på **egen risk** - skaparen tar inget ansvar för skada på hårdvara, mjukvara eller dataförlust. Kör dry-run först och ha en verifierad backup. Se [DISCLAIMER.md](DISCLAIMER.md).
+
 Principer, logik och en körbar verktygslåda för att **flytta den lokala datamappen för en molnsynkad tjänst** (OneDrive, Google Drive) från en disk till en annan på Windows — utan att trigga molnradering, utan att massmaterialisera platshållare, och med bevisbar verifiering att inget gått förlorat.
 
-Projektet är destillerat ur två skarpa flyttar (Google Drive och OneDrive Personal) och följer `cowork-projektinstruktioner`. Det är avidentifierat: inga personer, användare, datorer eller system nämns. Det enda som är specifikt är **vilka molntjänster** som stöds och **vilka klient-/versionsnummer** det är testat mot.
+Projektet är destillerat ur två skarpa flyttar (Google Drive och OneDrive Personal) och följer `cowork-projektinstruktioner` (konventionerna sammanfattas i `01_docs/PRINCIPLES.md` så repot är självbärande). Det är avidentifierat: inga personer, användare, datorer eller system nämns. Det enda som är specifikt är **vilka molntjänster** som stöds och **vilka klient-/versionsnummer** det är testat mot.
 
 ## Vad det är / inte är
 
