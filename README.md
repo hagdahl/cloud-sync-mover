@@ -57,3 +57,7 @@ CHANGELOG.md, README.md, LICENSE, .gitignore, config.example
 ## Licens
 
 MIT — se `LICENSE`.
+
+## Författare / Maintainer
+
+David Hagdahl <david@hagdahl.se>

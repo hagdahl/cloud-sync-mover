@@ -36,3 +36,8 @@ Kort ADR per beslut. Format: kontext → beslut → konsekvens.
 **Kontext:** `.git` i en synkad molnmapp kolliderar med synkklientens skanning → korrupt objektdatabas (bevisat i ett tidigare projekt).
 **Beslut:** initiera Git med separat git-dir utanför synkytan, `gc.auto 0`, first commit med namngivna filer (aldrig `git add .`).
 **Konsekvens:** arbetskopian synkas, Git-objekten inte; ingen historikförlust. Se `Initialize-Repo.ps1`.
+
+## ADR-007 - Git-dir i projektmappen (frångår ADR-006) + namngiven upphovsperson
+**Kontext:** projektägaren vill ha ett självbärande/portabelt repo med .git i projektmappen, och egen publicerings-identitet.
+**Beslut:** flytta .git tillbaka in i den molnsynkade projektmappen; behåll gc.auto 0 som mildring. Upphovsperson: David Hagdahl (medvetet inkluderad egen PII i LICENSE/README per uttryckligt beslut).
+**Konsekvens:** självbärande/portabelt repo, men bär åter risken för synkklient-korruption av .git (ADR-006:s skäl). Mildring: gc.auto 0 + pausa synk vid stora git-operationer.
