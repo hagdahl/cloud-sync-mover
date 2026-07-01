@@ -60,3 +60,12 @@ powershell -File 03_src\ps\start_all_jobs.ps1    # återstartar kontrollerat
 - Tom måldestination men "verify" grönt → FoD-platshållare (PLAYBOOK felmek. 2). Kör hydrerings-medveten verify.
 - MD5-fel i mängd → troligen hydrering pågår (felmek. 3), vänta.
 - Klienten visar hundratals "synkfel" → kör state-diagnosen; nästan alltid throttling (PLAYBOOK 7).
+
+## 7b. Loggdiagnos (djupare)
+
+- **OneDrive ODL-loggar (throttling-detaljer):**
+  `powershell -File 03_src\ps\Read-OneDriveLogs.ps1 -Config .\config.local`
+  Räknar 429/403/throttle-termer + `Download`/`ActiveHydration`-scenarier ur `.aodl`/`.odlgz`.
+- **Google Drive inode-/raderingsvarning (kör FÖRE/under en Drive-flytt):**
+  `powershell -File 03_src\ps\Read-GoogleDriveLogs.ps1`
+  Hittar `MIRROR_GDOC_DELETED` / `changed inode` i `drive_fs.txt`. Växer `MIRROR_GDOC_DELETED` → stoppa Drive omedelbart (`stop_all_jobs.ps1`) och följ återställningsnoterna.

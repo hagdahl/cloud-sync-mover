@@ -22,3 +22,10 @@ Det enda specifika i detta projekt är vilka tjänster och klientversioner det �
 
 ## Generellt
 Vilken provider som helst med Files-On-Demand + en inbyggd "byt plats"-funktion passar mönstret. Har klienten ingen sådan funktion: eskalera, flytta aldrig bakom klientens rygg.
+
+## Loggplatser och parsers
+
+| Tjänst | Loggplats | Parser i detta projekt |
+|---|---|---|
+| OneDrive | `%LOCALAPPDATA%\Microsoft\OneDrive\logs\<konto>\*.aodl/.odlgz` | `Read-OneDriveLogs.ps1` + `parse_odl.py` |
+| Google Drive | `%LOCALAPPDATA%\Google\DriveFS\Logs\drive_fs.txt` | `Read-GoogleDriveLogs.ps1` |

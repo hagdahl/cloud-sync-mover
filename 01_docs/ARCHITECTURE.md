@@ -46,3 +46,14 @@ Långkörande filoperationer startas frånkopplat (background job / separat sess
 - `.py` — UTF-8 utan BOM; `sys.stdout.reconfigure(encoding="utf-8")` överst.
 - `.md` — UTF-8 utan BOM, native å/ä/ö.
 - Config läses som INI (ingen BOM-känslig parser).
+
+## Loggdiagnos (komplement till state-DB)
+
+Utöver synkmotorns *tillstånd* (`read_sync_state.py`) finns två loggparsrar för *händelseströmmen*:
+
+| Script | Läser | Roll |
+|---|---|---|
+| `Read-OneDriveLogs.ps1` + `parse_odl.py` | OneDrives ODL-loggar (`.aodl` klartext / `.odlgz` gzip) | räknar throttle-/felsignaler + scenarionamn; visar *varför* felräknaren är hög just nu |
+| `Read-GoogleDriveLogs.ps1` | Google Drives `drive_fs.txt` (klartext) | tidig varning för inode-fällan: `MIRROR_GDOC_DELETED`, `changed inode` |
+
+Regel: state-DB:n är facit för tillståndet, loggen förklarar den pågående aktiviteten. Kör state-läsaren först, loggparsern för detaljer.

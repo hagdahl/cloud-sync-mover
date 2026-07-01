@@ -9,3 +9,8 @@ Skapade `cloud-sync-mover`: playbook, docs, PowerShell/Python-verktygslåda och 
 - **Struktur:** bantad från full B9 (se `00_admin/DECISIONS.md` ADR-000).
 - **Verifiering:** smoke-tester gröna; alla `.ps1` ASCII-only + parse-rena; PII-scan ren på spårad yta.
 - **Rollback:** ta bort projektmappen; inga externa system berördes, ingen data flyttades. `_sources/` är `.gitignore`:ad och committas aldrig.
+
+## 2026-07-01 - Loggparsers tillagda
+La till diagnos-loggparsrar: `03_src/py/parse_odl.py` + `03_src/ps/Read-OneDriveLogs.ps1` (OneDrive ODL), och `03_src/ps/Read-GoogleDriveLogs.ps1` (Google Drive inode-/raderingsmarkorer). Docs uppdaterade (ARCHITECTURE, USER_GUIDE, PLAYBOOK, PROVIDER-NOTES).
+- Rollback: ta bort de tre filerna + append-sektionerna. Ingen data berordes.
+- Verifiering: smoke-tester (ASCII + parse) grona; PII-scan ren.

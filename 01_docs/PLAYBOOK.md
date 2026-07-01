@@ -109,3 +109,10 @@ Detaljerad, återanvändbar diagnostik: `03_src/py/read_sync_state.py` + `03_src
 - Radera källan direkt efter flytt (behåll som baslinje i N dygn).
 - Öppna klientens live-databaser read-write.
 - Lägg en aktiv synkmapp på en SMR-disk.
+
+## 9. Loggparsers (diagnos-komplement)
+
+Tillståndsläsning (avsnitt 7) räcker för de flesta diagnoser, men loggströmmen ger detaljer och tidiga varningar:
+
+- **OneDrive:** `Read-OneDriveLogs.ps1` + `parse_odl.py` läser ODL-loggarna. `.aodl` är klartext (magic `EBFGONED`), `.odlgz` är gzip. Full av-obfuskering av filvägar kräver leverantörens strängkarta och är sällan värd besväret — scenarionamn + HTTP-koder (429/403) räcker för att bekräfta throttling.
+- **Google Drive:** `Read-GoogleDriveLogs.ps1` skannar `drive_fs.txt` efter `MIRROR_GDOC_DELETED` (molnradering) och `changed inode` (identitetsändring). Detta är den enda tidiga varningen för inode-fällan — kör det före och under en Drive-flytt.
