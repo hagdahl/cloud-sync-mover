@@ -1,0 +1,25 @@
+# cloud-sync-mover - config.example (B13)
+# Copy to config.local (gitignored) and fill in. No secrets here - only paths and switches.
+# Override order: CLI flag > ENV (CSM_<SECTION>_<KEY>) > config.local > config.example > code default.
+
+[paths]
+# Current (source) location of the synced data folder, e.g. C:\Users\<user>\OneDrive
+source_root =
+# Target root to move to (fast, roomy, NON-SMR disk recommended), e.g. D:\OneDrive
+target_root =
+# Where the toolkit writes inventory/verification artifacts (local fast disk, NOT the synced folder)
+work_dir = C:\cloud-sync-mover-work
+
+[provider]
+# onedrive-personal | onedrive-business | google-drive
+name = onedrive-personal
+# Client version this run was tested against (informational only)
+client_version =
+
+[move]
+# FoD-preserving: never expands the set of locally-materialized files
+preserve_files_on_demand = true
+# Minimum days of stable sync before the SOURCE may be moved/removed (deletion gate, A3)
+min_stable_days = 5
+# All destructive steps are opt-in; dry-run is the default
+dry_run_default = true

@@ -1,0 +1,29 @@
+# --- Local, unscrubbed source material - NEVER published (A2) ---
+_sources/
+_backups/
+
+# --- Local config (B13/A2) ---
+config.local
+config.local.*
+*.local
+
+# --- Generated output / working data (may carry personal paths or data) (A2) ---
+02_data/output/
+02_data/processed/
+05_logs/
+*.log
+inventory_*.csv
+md5_*.csv
+structure_report*.txt
+*_done.json
+*_progress.txt
+state_snapshot/
+
+# --- Secrets ---
+.env
+secrets/
+
+# --- OS / editor noise ---
+Thumbs.db
+desktop.ini
+.DS_Store
