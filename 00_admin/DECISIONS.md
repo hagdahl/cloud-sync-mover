@@ -47,3 +47,13 @@ Superseded by ADR-008: documentation is now written in English.
 **Context:** the repo is public; a single English surface across docs and code widens reach and removes the SV/EN split. B9 already requires English for code/identifiers/schema and permits user-facing docs in another language, so this is a deliberate reach choice, not a compliance fix.
 **Decision:** all documentation is written in English; code, identifiers and schema remain English (unchanged). The Swedish baseline is preserved at tag v0.1.0.
 **Consequence:** single-language public surface; ADR-004's Swedish-docs decision no longer applies. .md stays UTF-8 without BOM; .ps1 stays ASCII-only.
+
+## ADR-009 - Python is standard-library only; exact-pin policy (B6)
+**Context:** B6 requires dependencies to be documented and locked to exact versions, separated into runtime vs test. The Python scripts import only the standard library, so there is nothing third-party to pin, but the *statement* of that was missing (see issue #10).
+**Decision:** ship a `requirements.txt` at the root that declares the runtime as stdlib-only on a tested CPython 3.11 baseline, distinguishes runtime from test/dev, and records the policy: any future third-party package is pinned with `==` (exact), never a range. Runtime baselines are also stated in `README.md` / `01_docs/ARCHITECTURE.md`.
+**Consequence:** the B6 gap is closed with an explicit, reproducible declaration; the file also documents where to pin if a dependency is ever added.
+
+## ADR-010 - Accept the ADR-007 .git-in-synced-folder risk; origin is authoritative (issue #11)
+**Context:** ADR-007 keeps `.git` inside the cloud-synced project folder, re-introducing the object-database corruption risk ADR-006 avoided. The project owner wants the self-contained/portable layout, so restoring ADR-006 is not desired.
+**Decision:** accept the residual risk with `origin` (GitHub) as the authoritative copy: local `.git` corruption is recovered by re-cloning from origin. Mitigations: keep `gc.auto 0` (ADR-007), and run `03_src/ps/Test-RepoHealth.ps1` (git fsck) periodically and before any large git operation to catch corruption early. The recovery path is documented in `00_admin/HANDOVER.md`.
+**Consequence:** the portable layout is kept; corruption is detectable and recoverable without work loss, as long as the working tree is committed and pushed to origin regularly. Superset option (separate git-dir, ADR-006) remains available via `Initialize-Repo.ps1` if the risk posture changes.

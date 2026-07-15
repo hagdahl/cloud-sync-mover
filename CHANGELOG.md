@@ -1,6 +1,6 @@
 # CHANGELOG
 
-> Version 0.2.0
+> Version 0.3.0
 
 Format: date - change - rollback.
 
@@ -36,7 +36,7 @@ Extended `config.example` with Google Drive support: mount/virtual-disk paths an
 - Verification: config reads as INI; no secrets added.
 
 ## 2026-07-15 - CHANGELOG reconciliation + baseline v0.1.0
-Reconciled the CHANGELOG against the git history: added back-registered entries for commits `b51138a` and `cbcb3f7` (B2), fixed encoding artifacts (deletion markers, touched, green, `01_docs/PRINCIPLES.md`) and added version marker `> Version 0.1.0`. Tagged as `v0.1.0` — Swedish baseline before English translation.
+Reconciled the CHANGELOG against the git history: added back-registered entries for commits `b51138a` and `cbcb3f7` (B2), fixed three encoding/typo artifacts in older entries (dropped Swedish diacritics, and a broken `01_docs/PRINCIPLES.md` path reference), and added version marker `> Version 0.1.0`. Tagged as `v0.1.0` — Swedish baseline before English translation.
 - Rollback: `git revert` this commit; delete the tag `v0.1.0` (`git tag -d v0.1.0`).
 - Verification: every commit in the history now has a CHANGELOG entry (1:1); `.md` is UTF-8 without BOM.
 
@@ -44,3 +44,19 @@ Reconciled the CHANGELOG against the git history: added back-registered entries 
 Translated all Markdown docs (README, 00_admin/*, 01_docs/*, DISCLAIMER, CHANGELOG) from Swedish to English. Code, identifiers and schema were already English. ADR-004 (Swedish docs) superseded by ADR-008 (English docs); language references in PRINCIPLES/README/ARCHITECTURE/HANDOVER updated. Version bumped to 0.2.0.
 - Rollback: git revert; the Swedish baseline remains at tag v0.1.0.
 - Verification: per-file invariant check (commands, paths, hex, thresholds, enums, log markers preserved) + adversarial semantic review vs the Swedish source; .md is UTF-8 without BOM.
+
+## 2026-07-15 - v0.3.0: real gates and reproducibility
+Hardened the safety gates and closed reproducibility gaps, from the open issue backlog. Scope chosen to be verifiable without live provider/Windows integration; the provider-integration-heavy issues (#3, #4, #5, #8, #9) are deferred to v0.4.0.
+- **Phase success contract (#7):** every `*_done.json` now carries a common header (`schema csm.artifact/1`: provider, mode, source_root, target_root, finishedUtc, success, errors, errorCategories). Read phases set `success=false` on enumeration/hash/read errors instead of writing a bare completion marker.
+- **retire-source prerequisite gate (#2):** the destructive phase now refuses unless the latest preflight/structure/verify artifacts are present, green, identity-consistent, recent, and stable for `min_stable_days` from a recorded `[move] move_completed_utc`. Emergency override via explicit, recorded `-Force`.
+- **Sync-health preflight gate (#1):** the passive "up to date" reminder is now a real gate — preflight reports `NEEDS_CONFIRMATION` (FAIL) until confirmed via `-SyncConfirmed` or `[move] assume_up_to_date=true`.
+- **Junction-safe retire + move exit code (#13 partial, #3 partial):** `retire-source` robocopy now passes `/XJ /XJD /XJF` (never traverses junctions during `/MOVE`) and treats exit `>=8` as failure, writing a `retire_*_done.json` with the exit code and gate/override state.
+- **Provider/mode validation (#6 partial):** `Resolve-CsmProviderMode` validates and rejects invalid provider/mode combinations and stamps `mode` into artifacts.
+- **Dependency pinning (#10):** added `requirements.txt` (stdlib-only declaration + exact-pin policy) and ADR-009.
+- **`.git`-in-synced-folder mitigation (#11):** ADR-010 (accept risk, origin authoritative), new `03_src/ps/Test-RepoHealth.ps1` (`git fsck`), recovery path in HANDOVER.
+- **CHANGELOG hygiene (#12):** reworded an awkward historical entry; added a UTF-8/BOM check for tracked `.md` to the test harness.
+- **New config keys:** `[move] assume_up_to_date`, `move_completed_utc`, `retire_max_artifact_age_days` (all in `config.example`).
+- Files: `03_src/ps/_common.ps1` (+helpers), `Invoke-CloudSyncMove.ps1`, `Test-MovePreflight.ps1`, `Invoke-Inventory.ps1`, `Invoke-Md5Baseline.ps1`, `Compare-MoveStructure.ps1`, `Invoke-HydrationVerify.ps1`, new `Test-RepoHealth.ps1`, `requirements.txt`, `config.example`, docs (DECISIONS ADR-009/010, DATA-FORMATS, HANDOVER, README, ARCHITECTURE, USER_GUIDE), `04_tests/validation/Test-Toolkit.ps1` (+11 unit tests).
+- Rollback: `git revert` this commit / reset to tag `v0.2.0`. No behavior of existing green paths changed except the two new gates (which fail safe); no data operation altered beyond adding `/XJ` exclusions.
+- Hardening from an adversarial code review of the gate: identity check now fails **closed** on any missing field; a "hydrating" verify re-run now writes a non-green artifact (so a stale earlier green cannot be reused); "latest artifact" is chosen by content timestamp (not file mtime); future-dated artifacts are rejected; `retire-source` asserts the source exists before robocopy; and `Test-RepoHealth.ps1` no longer throws on git's stderr notices.
+- Verification: extended unit tests (provider/mode, sync-health, artifact success/age, retire gate with fixtures incl. identity fail-closed, BOM) — run `04_tests/validation/Test-Toolkit.ps1` on Windows; `.ps1` ASCII-only; orchestrator dry-run unchanged.

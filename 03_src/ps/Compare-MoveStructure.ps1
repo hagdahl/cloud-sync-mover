@@ -42,16 +42,16 @@ while (($line = $sr.ReadLine()) -ne $null) {
 }
 $sr.Close(); $mw.Close()
 $real = $missing - $junk
-$sum = [ordered]@{
-    finishedUtc     = (Get-Date).ToUniversalTime().ToString("s")
-    target_files    = $tCount
-    inventory_total = $total
-    present         = $present
-    missing         = $missing
-    missing_junk    = $junk
-    missing_real    = $real
-    extra_approx    = ($tCount - $present)
-    report          = $report
-}
+# Fail closed (#7): any real (non-junk) missing file means the structure is not verified.
+$cats = @(); if ($real -gt 0) { $cats += 'missing-files' }
+$sum = New-CsmMeta -Config $cfg -Phase 'structure' -Success ($real -eq 0) -Errors $real -ErrorCategories $cats
+$sum['target_files']    = $tCount
+$sum['inventory_total'] = $total
+$sum['present']         = $present
+$sum['missing']         = $missing
+$sum['missing_junk']    = $junk
+$sum['missing_real']    = $real
+$sum['extra_approx']    = ($tCount - $present)
+$sum['report']          = $report
 Write-CsmAtomic $done ($sum | ConvertTo-Json)
 Write-Host "Structure: present=$present missing=$missing (junk=$junk real=$real) extra~$($tCount-$present) -> $report"

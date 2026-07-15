@@ -29,7 +29,21 @@ Tab-separated. One row per local file.
 Plain text. Sections: files in the phase-0 ground truth that are missing on the target, plus a summary line (present/missing/extra). "Missing" is expected to be dominated by non-synced junk (Thumbs.db, `~$` temp files, desktop.ini, `.tmp`).
 
 ## *_done.json  (completion markers, all phases)
-`{ finishedUtc, <phase-specific counters> }` — written last, atomically. Presence = the phase is complete and verified.
+Written last, atomically. Since v0.3.0 every completion marker carries a common header (`schema: csm.artifact/1`) so downstream gates can judge success and identity, not just presence:
+
+| Field | Type | Note |
+|---|---|---|
+| schema | string | `csm.artifact/1` |
+| phase | string | `inventory` \| `baseline` \| `preflight` \| `structure` \| `verify` \| `retire-source` |
+| provider | string | provider.name at run time |
+| mode | string | `streaming` \| `mirror` \| `n/a` (Google Drive mode; #6) |
+| source_root / target_root | string | roots this artifact refers to (identity check for the retire gate) |
+| finishedUtc | ISO-8601 | UTC completion time |
+| success | bool | phase-specific green/complete verdict (#7) — false on enumeration/hash/read errors or unmet criteria |
+| errors | integer | error count |
+| errorCategories | string[] | e.g. `enumeration`, `hash-read`, `missing-files`, `md5-mismatch`, `read-error`, `robocopy` |
+
+Phase-specific counters follow the header (e.g. inventory: `files`, `online_only`; structure: `missing_real`; verify: `md5_match`, `md5_mismatch`; preflight also keeps the legacy `PASS`). The retire-source gate requires the latest `preflight`, `structure`, and `verify` markers to be present, `success:true`, mutually consistent in identity, recent, and stable (see PLAYBOOK / USER_GUIDE).
 
 ## state_report.json  (diagnostics)
 `{ accounts: [ { name, files, conflicts, fileStatus_dist, throttle_events, recent_error_codes } ] }` — from the sync engine's SQLite state (read-only snapshot).

@@ -1,0 +1,14 @@
+# cloud-sync-mover - Python runtime dependencies (B6)
+#
+# The Python scripts (03_src/py/parse_odl.py, 03_src/py/read_sync_state.py) use the
+# standard library ONLY. There are no third-party runtime dependencies to install.
+#
+# Runtime (tested baseline):
+#   CPython 3.11  - standard library only
+#
+# Test / dev:
+#   none beyond the runtime. 04_tests/validation/Test-Toolkit.ps1 runs on
+#   Windows PowerShell 5.1 or PowerShell 7.x and needs no extra packages.
+#
+# Policy (B6): if a third-party package is ever introduced, pin it here with '=='
+# (an exact version), never a range or a minimum. See 00_admin/DECISIONS.md ADR-009.

@@ -30,7 +30,7 @@ The tools **never read file content** during the inventory phase (attributes onl
 | OneDrive for Business | OneDrive for Windows | 26.x | Method A |
 | Google Drive | Google Drive for desktop | 2024–2025 generation | Change location in the client's settings (equivalent to Method A) |
 
-Windows 10/11. PowerShell 5.1 + 7. Python 3.11+ (only for reading OneDrive's SQLite state).
+Windows 10/11. PowerShell 5.1 or 7.x. Python 3.11 (standard library only; used only for reading OneDrive's SQLite state). Exact runtime baseline and pinning policy: see `requirements.txt` and `00_admin/DECISIONS.md` ADR-009.
 
 ## Quick start
 
@@ -51,7 +51,7 @@ Use **the cloud client's own move function** (never a junction/symlink), preserv
 03_src/ps/   PowerShell toolkit (ASCII-only, dry-run default)
 03_src/py/   read_sync_state.py (reads OneDrive's SQLite state, read-only)
 04_tests/validation/  smoke / dry-run tests
-CHANGELOG.md, README.md, LICENSE, .gitignore, config.example
+CHANGELOG.md, README.md, LICENSE, .gitignore, config.example, requirements.txt
 ```
 
 ## License

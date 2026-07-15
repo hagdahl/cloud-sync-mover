@@ -80,3 +80,152 @@ function Test-CsmWritable {
         return $true
     } catch { return $false }
 }
+
+# ---------------------------------------------------------------------------
+# v0.3.0 additions: provider-mode validation (#6), sync-health gate (#1),
+# phase success contract (#7), retire-source prerequisite gate (#2).
+# ---------------------------------------------------------------------------
+
+function Resolve-CsmProviderMode {
+    # #6: validate provider/mode. Returns 'streaming' | 'mirror' | 'n/a'. Throws on an invalid combo.
+    param($Config)
+    $prov = "$(Get-CsmValue $Config 'provider' 'name' 'unknown')".ToLower()
+    if ($prov -eq 'google-drive') {
+        $m = "$(Get-CsmValue $Config 'google_drive' 'mode' 'streaming')".ToLower()
+        if ($m -ne 'streaming' -and $m -ne 'mirror') {
+            throw "Invalid [google_drive] mode '$m' (expected 'streaming' or 'mirror')"
+        }
+        return $m
+    }
+    if ($prov -like 'onedrive-*') { return 'n/a' }
+    if ($prov -eq 'unknown') { throw "provider.name not set (expected onedrive-personal | onedrive-business | google-drive)" }
+    return 'n/a'
+}
+
+function Resolve-CsmSyncHealth {
+    # #1: sync-health gate. CONFIRMED only via [move] assume_up_to_date=true or the -Confirmed switch.
+    param($Config, [switch]$Confirmed)
+    if ($Confirmed) { return @{ status = 'CONFIRMED'; source = 'flag' } }
+    $a = "$(Get-CsmValue $Config 'move' 'assume_up_to_date' 'false')".ToLower()
+    if ($a -eq 'true') { return @{ status = 'CONFIRMED'; source = 'config' } }
+    return @{ status = 'NEEDS_CONFIRMATION'; source = 'none' }
+}
+
+function New-CsmMeta {
+    # #7: common artifact header stamped into every *_done.json.
+    param($Config, [string]$Phase, [bool]$Success, [int]$Errors = 0, [string[]]$ErrorCategories = @())
+    $mode = 'n/a'
+    try { $mode = Resolve-CsmProviderMode $Config } catch { $mode = 'invalid' }
+    return [ordered]@{
+        schema          = 'csm.artifact/1'
+        phase           = $Phase
+        provider        = (Get-CsmValue $Config 'provider' 'name' 'unknown')
+        mode            = $mode
+        source_root     = (Get-CsmValue $Config 'paths' 'source_root')
+        target_root     = (Get-CsmValue $Config 'paths' 'target_root')
+        finishedUtc     = (Get-Date).ToUniversalTime().ToString('s')
+        success         = [bool]$Success
+        errors          = [int]$Errors
+        errorCategories = @($ErrorCategories)
+    }
+}
+
+function Get-CsmLatestArtifact {
+    # The <Prefix>_*_done.json with the newest CONTENT finishedUtc (not file mtime, which a
+    # restore/copy can bump). Returns the parsed object, or $null when none exist OR the newest
+    # one fails to parse (fail closed - a corrupt newest artifact must not fall back to an older green one).
+    param([string]$WorkDir, [string]$Prefix)
+    $files = Get-ChildItem (Join-Path $WorkDir ("{0}_*_done.json" -f $Prefix)) -EA SilentlyContinue
+    if (-not $files) { return $null }
+    $styles = [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal
+    $bestObj = $null; $bestKey = $null; $bestParseOk = $true
+    foreach ($file in $files) {
+        $obj = $null; $parseOk = $true
+        try { $obj = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json } catch { $parseOk = $false }
+        $key = $file.LastWriteTimeUtc
+        if ($obj -and (@($obj.PSObject.Properties.Name) -contains 'finishedUtc') -and $obj.finishedUtc) {
+            try { $key = [datetime]::Parse([string]$obj.finishedUtc, [System.Globalization.CultureInfo]::InvariantCulture, $styles) } catch { }
+        }
+        if ($null -eq $bestKey -or $key -gt $bestKey) { $bestKey = $key; $bestObj = $obj; $bestParseOk = $parseOk }
+    }
+    if (-not $bestParseOk) { return $null }
+    return $bestObj
+}
+
+function Test-CsmArtifactSuccess {
+    # True only when the artifact explicitly reports success (or legacy PASS=true).
+    param($Meta)
+    if (-not $Meta) { return $false }
+    $names = @($Meta.PSObject.Properties.Name)
+    if ($names -contains 'success') { return [bool]$Meta.success }
+    if ($names -contains 'PASS')    { return [bool]$Meta.PASS }
+    return $false
+}
+
+function Get-CsmArtifactAgeDays {
+    # Age in days of an artifact's finishedUtc vs $Now, or $null when unparseable.
+    param($Meta, [datetime]$Now)
+    if (-not $Meta) { return $null }
+    if (-not (@($Meta.PSObject.Properties.Name) -contains 'finishedUtc') -or -not $Meta.finishedUtc) { return $null }
+    try {
+        $styles = [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal
+        $d = [datetime]::Parse([string]$Meta.finishedUtc, [System.Globalization.CultureInfo]::InvariantCulture, $styles)
+        return ($Now - $d).TotalDays
+    } catch { return $null }
+}
+
+function Assert-CsmRetireReady {
+    # #2: enforce retire-source prerequisites from phase evidence.
+    # Returns @{ ok = [bool]; reasons = @() }. Pure/deterministic (no destructive action).
+    param($Config, [string]$WorkDir, [datetime]$Now = (Get-Date).ToUniversalTime())
+    $reasons = @()
+    $minDays = [int](Get-CsmValue $Config 'move' 'min_stable_days' 5)
+    $maxAge  = [double](Get-CsmValue $Config 'move' 'retire_max_artifact_age_days' 7)
+    $src  = Get-CsmValue $Config 'paths' 'source_root'
+    $tgt  = Get-CsmValue $Config 'paths' 'target_root'
+    $prov = Get-CsmValue $Config 'provider' 'name' 'unknown'
+
+    $arts = @{
+        preflight = (Get-CsmLatestArtifact $WorkDir 'preflight')
+        structure = (Get-CsmLatestArtifact $WorkDir 'structure')
+        verify    = (Get-CsmLatestArtifact $WorkDir 'verify')
+    }
+    foreach ($name in @('preflight','structure','verify')) {
+        if (-not $arts[$name]) { $reasons += ("missing {0} artifact (run -Phase {0} first)" -f $name) }
+    }
+    if ($reasons.Count) { return @{ ok = $false; reasons = $reasons } }
+
+    if (-not $src) { $reasons += "config [paths] source_root is empty" }
+    if (-not $tgt) { $reasons += "config [paths] target_root is empty" }
+    foreach ($name in @('preflight','structure','verify')) {
+        $m = $arts[$name]
+        if (-not (Test-CsmArtifactSuccess $m)) { $reasons += ("latest {0} is not green" -f $name) }
+        # Identity fails CLOSED: a missing/empty identity field is not treated as a match.
+        if (-not $m.source_root -or -not $m.target_root -or -not $m.provider) {
+            $reasons += ("{0} artifact is missing identity (source_root/target_root/provider) - rerun the phase" -f $name)
+        } else {
+            if ($src -and $m.source_root -ne $src)  { $reasons += ("{0} source_root does not match config" -f $name) }
+            if ($tgt -and $m.target_root -ne $tgt)  { $reasons += ("{0} target_root does not match config" -f $name) }
+            if ($m.provider -ne $prov)              { $reasons += ("{0} provider does not match config" -f $name) }
+        }
+        $age = Get-CsmArtifactAgeDays $m $Now
+        if ($null -eq $age)       { $reasons += ("{0} artifact has no usable timestamp" -f $name) }
+        elseif ($age -lt 0)       { $reasons += ("{0} artifact is future-dated (clock skew?)" -f $name) }
+        elseif ($age -gt $maxAge) { $reasons += ("{0} artifact is stale ({1} d > {2} d)" -f $name, [math]::Round($age, 1), $maxAge) }
+    }
+
+    # Stability gate: require a recorded client-move completion and min_stable_days elapsed.
+    $mc = Get-CsmValue $Config 'move' 'move_completed_utc'
+    if (-not $mc) {
+        $reasons += ("[move] move_completed_utc not set - record the client-move completion (ISO 8601 UTC) to arm the {0}-day stability gate" -f $minDays)
+    } else {
+        try {
+            $styles = [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal
+            $mcDate = [datetime]::Parse([string]$mc, [System.Globalization.CultureInfo]::InvariantCulture, $styles)
+            $elapsed = ($Now - $mcDate).TotalDays
+            if ($elapsed -lt $minDays) { $reasons += ("stability interval not met ({0} d elapsed < {1} d)" -f [math]::Round($elapsed, 1), $minDays) }
+        } catch { $reasons += "move_completed_utc is not a valid ISO 8601 timestamp" }
+    }
+
+    return @{ ok = ($reasons.Count -eq 0); reasons = $reasons }
+}

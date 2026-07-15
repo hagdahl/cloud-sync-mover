@@ -47,6 +47,11 @@ Long-running file operations are started detached (background job / separate ses
 - `.md` — UTF-8 without BOM (docs are English per ADR-008; keep them ASCII-clean where practical).
 - Config is read as INI (no BOM-sensitive parser).
 
+## Environment (B6)
+- **Runtime:** Windows 10/11; PowerShell 5.1 or 7.x; CPython 3.11, standard library only (no third-party packages). See `requirements.txt`.
+- **Pinning policy (ADR-009):** if a third-party package is ever introduced it is pinned with `==` (exact), never a range. Test/dev needs nothing beyond the runtime.
+- **Repo integrity (ADR-010):** `.git` lives in the synced folder (ADR-007); `origin` is authoritative and `03_src/ps/Test-RepoHealth.ps1` (`git fsck`) detects corruption early — recover by re-cloning.
+
 ## Log diagnostics (complement to the state DB)
 
 Beyond the sync engine's *state* (`read_sync_state.py`) there are two log parsers for the *event stream*:

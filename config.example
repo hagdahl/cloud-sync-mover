@@ -35,3 +35,12 @@ preserve_files_on_demand = true
 min_stable_days = 5
 # All destructive steps are opt-in; dry-run is the default
 dry_run_default = true
+# Sync-health gate (#1): preflight only PASSES when this is true (or -SyncConfirmed is passed).
+# Set to true only after confirming the client shows "Up to date" (no pending changes).
+assume_up_to_date = false
+# Retire-source stability gate (#2): record when the CLIENT move finished, ISO 8601 UTC
+# (e.g. 2026-07-20T10:00:00Z). The gate requires min_stable_days to elapse from this time.
+# This value is operator-attested (the toolkit cannot observe the manual client move); set it honestly.
+move_completed_utc =
+# Retire-source gate (#2): reject preflight/structure/verify artifacts older than this many days.
+retire_max_artifact_age_days = 7

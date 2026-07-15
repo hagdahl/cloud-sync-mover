@@ -33,7 +33,18 @@ for ($i = 0; $i -lt $items.Count; $i += $step) {
     if (Test-Path -LiteralPath $full) { $a = [int][System.IO.File]::GetAttributes($full); if ($a -band 0x400000) { $online++ }; $checked++ }
 }
 Write-CsmLog "Sample: $online/$checked online-only" $log
-if ($online -gt 0) { Write-CsmLog "Hydration in progress - re-run later." $log; Write-Host "HYDRATING ($online/$checked online-only) - re-run later"; return }
+if ($online -gt 0) {
+    # Fail closed (#7 / review F2): stamp a non-green artifact so the retire gate sees the LATEST
+    # verify as "hydrating" and cannot pass on a stale earlier green verify.
+    $hmeta = New-CsmMeta -Config $cfg -Phase 'verify' -Success $false -Errors 0 -ErrorCategories @('hydration-pending')
+    $hmeta['phase_state']        = 'hydrating'
+    $hmeta['sample_online_only'] = $online
+    $hmeta['sample_checked']     = $checked
+    Write-CsmAtomic $done ($hmeta | ConvertTo-Json)
+    Write-CsmLog "Hydration in progress - re-run later." $log
+    Write-Host "HYDRATING ($online/$checked online-only) - re-run later"
+    return
+}
 
 # Full verify
 Write-CsmLog "Hydration settled. Full MD5 verify of $($items.Count) files..." $log
@@ -51,7 +62,15 @@ foreach ($it in $items) {
     } catch { $err++; $mw.WriteLine("ERR`t$($it.rel)`t$($_.Exception.Message)") }
 }
 $mw.Close()
-$sum = [ordered]@{ finishedUtc = (Get-Date).ToUniversalTime().ToString("s"); files = $items.Count; md5_match = $match; md5_mismatch = $mis; read_errors = $err; mismatches = $rep }
+# Fail closed (#7): any mismatch or read error means verification did not pass.
+# (The hydration-pending path returns earlier and writes no done.json, so the retire gate sees no green verify.)
+$cats = @(); if ($mis -gt 0) { $cats += 'md5-mismatch' }; if ($err -gt 0) { $cats += 'read-error' }
+$sum = New-CsmMeta -Config $cfg -Phase 'verify' -Success (($mis -eq 0) -and ($err -eq 0)) -Errors ($mis + $err) -ErrorCategories $cats
+$sum['files']        = $items.Count
+$sum['md5_match']    = $match
+$sum['md5_mismatch'] = $mis
+$sum['read_errors']  = $err
+$sum['mismatches']   = $rep
 Write-CsmAtomic $done ($sum | ConvertTo-Json)
 Write-CsmLog "Full verify: match=$match mismatch=$mis err=$err" $log
 Write-Host "VERIFY: match=$match mismatch=$mis err=$err (mismatches -> $rep)"

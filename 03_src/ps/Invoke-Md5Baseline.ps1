@@ -39,7 +39,12 @@ while (($line = $sr.ReadLine()) -ne $null) {
     }
 }
 $sr.Close(); $sw.Flush(); $sw.Close()
-$sum = [ordered]@{ finishedUtc = (Get-Date).ToUniversalTime().ToString("s"); local_files = $n; hashed = $ok; errors = $err; out = $out }
+# Fail closed (#7): any hash/read error means the baseline is incomplete.
+$cats = @(); if ($err -gt 0) { $cats += 'hash-read' }
+$sum = New-CsmMeta -Config $cfg -Phase 'baseline' -Success ($err -eq 0) -Errors $err -ErrorCategories $cats
+$sum['local_files'] = $n
+$sum['hashed']      = $ok
+$sum['out']         = $out
 Write-CsmAtomic $done ($sum | ConvertTo-Json)
 Write-CsmLog "MD5 baseline done: $n local files, $ok hashed, $err errors" $log
 Write-Host "OK -> $out"

@@ -10,7 +10,8 @@
    - `target_root` = new location (fast, roomy, **not an SMR** disk)
    - `work_dir` = local working folder for artifacts (NOT in the sync folder)
    - `provider.name` = `onedrive-personal` | `onedrive-business` | `google-drive`
-2. Make sure the client shows **"Uppdaterad"/"Up to date"** (no pending changes).
+2. Make sure the client shows **"Up to date"** (no pending changes). Once confirmed, set `[move] assume_up_to_date = true` (or pass `-SyncConfirmed` to preflight) — the preflight sync-health gate requires it.
+3. After you perform the client move (step 4 below), record `[move] move_completed_utc` (ISO 8601 UTC, e.g. `2026-07-20T10:00:00Z`). The retire-source stability gate needs it to count `min_stable_days`.
 
 ## Run the phases
 
@@ -30,8 +31,8 @@ Or phase by phase:
    Started as a background job for large sets.
 
 3. **Phase 2 — preflight (safe):**
-   `powershell -File 03_src\ps\Test-MovePreflight.ps1 -Config .\config.local`
-   All gates must be green (free space, writability, up-to-date, disk type).
+   `powershell -File 03_src\ps\Test-MovePreflight.ps1 -Config .\config.local -SyncConfirmed`
+   All gates must be green: free space, writability, disk type, provider/mode validity, and **sync-health** — which reports `NEEDS_CONFIRMATION` (a FAIL) until you pass `-SyncConfirmed` or set `[move] assume_up_to_date = true`.
 
 4. **The move (manual, Method A):** follow `PROVIDER-NOTES.md` for your client — unlink, relink, Change location → `target_root`. The tool does NOT move it for you (the client must own the move).
 
@@ -48,9 +49,11 @@ Or phase by phase:
    Distinguishes throttling from real errors (see PLAYBOOK 7).
 
 8. **Phase 8/9 — gate out the source (destructive, time-gated):**
-   Only after `min_stable_days` days of stable sync:
+   First run it **without** `-Execute` to see the prerequisite gate:
+   `powershell -File 03_src\ps\Invoke-CloudSyncMove.ps1 -Config .\config.local -Phase retire-source`
+   The gate refuses unless the latest **preflight**, **structure**, and **verify** artifacts are all present, green (`success:true`), refer to the same source/target/provider, are recent (`retire_max_artifact_age_days`), and `min_stable_days` have elapsed since `move_completed_utc`. When the gate reads PASS:
    `powershell -File 03_src\ps\Invoke-CloudSyncMove.ps1 -Config .\config.local -Phase retire-source -Execute`
-   Moves (does not delete) the old source to backup, then empties it. Delete the backup much later.
+   It moves (does not delete) the old source to backup, then empties it. Delete the backup much later. An unmet gate can be overridden only with an explicit, recorded `-Force` — avoid it unless you understand the risk.
 
 ## Emergency stop (A7)
 ```

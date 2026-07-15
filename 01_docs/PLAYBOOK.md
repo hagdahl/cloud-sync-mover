@@ -46,7 +46,7 @@ Write a CSV (RelPath, SizeBytes, LastWriteUtc, AttrHex, Status) + a pinlist (all
 Compute MD5 for **only** local-available + always-keep (the ones that actually exist locally). Use `[System.Security.Cryptography.MD5]` (.NET) — NOT `Get-FileHash` (see failure mechanism 4). Write a CSV (RelPath, MD5, Size). This is the ground truth for the post-verification.
 
 ### Phase 2 — Preflight
-Gate on: (a) the sync is "Uppdaterad"/"Up to date" (no pending changes), (b) free space on the target is sufficient for the local files (not the whole cloud — FoD is preserved), (c) writability probe on the target (write+delete a test file, A4), (d) disk type on the target (warn for SMR — see failure mechanism 6), (e) secure a cloud baseline via the provider's API (driveId + used quota as ground truth). Never bind to a drive letter that can drift.
+Gate on: (a) the sync is "Up to date" (no pending changes), (b) free space on the target is sufficient for the local files (not the whole cloud — FoD is preserved), (c) writability probe on the target (write+delete a test file, A4), (d) disk type on the target (warn for SMR — see failure mechanism 6), (e) secure a cloud baseline via the provider's API (driveId + used quota as ground truth). Never bind to a drive letter that can drift.
 
 ### Phase 3 — Unlink
 Unlink the account in the client (the cloud untouched, the local files remain). Review any custom scripts for destructive ops against the old path before reconfiguration.

@@ -26,6 +26,15 @@ Principles, logic, and a runnable toolkit for moving the local data folder of a 
 ## Where the knowledge comes from
 `_sources/` contains the two lessons-learned files, the OneDrive move's handover, the 740-sync-error report, and the verification prompt. These are un-scrubbed originals; the publishable distillation is `01_docs/PLAYBOOK.md`.
 
+## Repo integrity & recovery (ADR-010)
+`.git` lives inside the cloud-synced folder (ADR-007), which risks object-database corruption. **`origin` (GitHub) is the authoritative copy.** To catch corruption early, run `03_src/ps/Test-RepoHealth.ps1` (a `git fsck` wrapper) periodically and before any large git operation. If it reports a problem, recover by re-cloning:
+
+1. `git clone <origin-url> <fresh-folder>`
+2. Restore the gitignored local files from your own copies: `config.local`, `_sources/`, and the external `work_dir`.
+
+Always commit and push to origin regularly so the authoritative copy is current.
+
 ## Remaining / possible additions
 - More providers (Dropbox, iCloud) in `PROVIDER-NOTES.md` once tested.
 - Automate Method A where the provider exposes a CLI (today manual/guided — the client must own the move).
+- Deferred toolkit hardening tracked in issues #3, #4, #5, #8, #9 (provider-integration-heavy; need live OneDrive/Drive fixtures).
