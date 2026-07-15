@@ -1,22 +1,22 @@
-# PRINCIPLES - konventionerna projektet följer (självbärande sammanfattning)
+# PRINCIPLES - the conventions the project follows (self-contained summary)
 
-Detta projekt följer konventionerna i standarden `cowork-projektinstruktioner`. För att repot ska vara **självbärande** - fungera utan tillgång till den standarden - sammanfattas de koder som citeras i projektet här i klartext. Koderna är bara referens-etiketter; principerna nedan är det som gäller.
+This project follows the conventions in the `cowork-project-instructions` standard. For the repo to be **self-contained** - to work without access to that standard - the codes cited in the project are summarized here in plain text. The codes are only reference labels; the principles below are what applies.
 
-| Kod | Princip (kort) |
+| Code | Principle (short) |
 |---|---|
-| A1 | Människa-i-loopen: dry-run som default, uttryckligt godkännande före destruktiva/irreversibla steg. |
-| A2 | Hemligheter och personuppgifter hålls utanför versionshanterat innehåll; `.gitignore` från start; den publika ytan är PII-fri. |
-| A3 | Versionshantering + rollback: Git från start, CHANGELOG med rollback, källan är baslinje tills den bevisats umbärlig. |
-| A4 | Självverifiering: inget rapporteras klart utan att ha verifierats (kör, räkna, jämför, testa). |
-| A5 | Definition of Done: explicit klar-kriterium per uppgift. |
-| A6 | Idempotens: script kan köras om utan dubbletter/korrupt state; atomic write (temp + rename). |
-| A7 | Least privilege + nödstopp: minsta behörighet, all automation kan stoppas i ett svep. |
+| A1 | Human-in-the-loop: dry-run as default, explicit approval before destructive/irreversible steps. |
+| A2 | Secrets and personal data are kept out of version-controlled content; `.gitignore` from the start; the public surface is PII-free. |
+| A3 | Version control + rollback: Git from the start, CHANGELOG with rollback, the source is the baseline until proven dispensable. |
+| A4 | Self-verification: nothing is reported as done without having been verified (run, count, compare, test). |
+| A5 | Definition of Done: explicit completion criterion per task. |
+| A6 | Idempotence: scripts can be re-run without duplicates/corrupt state; atomic write (temp + rename). |
+| A7 | Least privilege + emergency stop: minimal permissions, all automation can be stopped in one sweep. |
 | B3 | Self-bearing handover. |
-| B8 | Felhantering/loggning + encoding-disciplin (ASCII `.ps1`, UTF-8 utan BOM för `.py`/`.md`). |
-| B9 | Fast projektstruktur och namnkonvention, anpassad efter projekttyp. |
-| B11 | Beräkningsval/dataminimering: enklaste lokala verktyg först; ingen onödig molndelning. |
-| B12.2 | Riskhöjda lokala scriptjobb (radering/flytt/behörighet) kräver dry-run + loggning + godkännande. |
-| B13 | Centraliserad konfiguration (`config.example` -> `config.local`, tydlig override-ordning). |
-| B14 | Exekveringsmiljö kontra målmiljö: kör där operationen hör hemma; frikoppla långjobb. |
+| B8 | Error handling/logging + encoding discipline (ASCII `.ps1`, UTF-8 without BOM for `.py`/`.md`). |
+| B9 | Fixed project structure and naming convention, adapted to the project type. |
+| B11 | Compute choice/data minimization: simplest local tools first; no unnecessary cloud sharing. |
+| B12.2 | Risk-elevated local script jobs (deletion/move/permissions) require dry-run + logging + approval. |
+| B13 | Centralized configuration (`config.example` -> `config.local`, clear override order). |
+| B14 | Execution environment versus target environment: run where the operation belongs; decouple long-running jobs. |
 
-**Om `cowork-configurations`:** den filen är standardens miljöspecifika, lokal-only instans (absoluta sökvägar, versioner, identifierande data). Den publiceras **aldrig**, och detta projekt refererar den inte och behöver den inte. Allt en mottagare behöver finns i detta repo.
+**About `cowork-configurations`:** that file is the standard's environment-specific, local-only instance (absolute paths, versions, identifying data). It is **never** published, and this project does not reference it and does not need it. Everything a recipient needs is in this repo.

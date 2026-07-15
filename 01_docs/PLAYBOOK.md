@@ -1,118 +1,118 @@
-# PLAYBOOK — flytta en molnsynkad datamapp mellan diskar
+# PLAYBOOK — moving a cloud-synced data folder between disks
 
-Generaliserad, PII-fri destillering av två skarpa flyttar (Google Drive, OneDrive Personal). Kod och identifierare på engelska; principer på svenska. Referens till tjänstespecifika detaljer: `PROVIDER-NOTES.md`.
+Generalized, PII-free distillation of two real-world moves (Google Drive, OneDrive Personal). Code and identifiers in English; principles in English. Reference for service-specific details: `PROVIDER-NOTES.md`.
 
-## 0. Grundprinciper (icke förhandlingsbara)
+## 0. Core principles (non-negotiable)
 
-1. **Molnet är facit och rörs aldrig.** Ingen massradering, ingen "Ladda ner alla filer", ingen strukturändring i molnet under flytten.
-2. **Använd klientens egen flyttfunktion — aldrig junction/symlink.** En synkmotor spårar mappidentitet via NTFS file-id; en junction eller robocopy-flyttad rot kan tolkas som "innehållet raderat" → molnet trashas. Klientens "Byt plats"/"Välj plats" flyttar datamappen och behåller synk-identiteten.
-3. **Bevara Files-On-Demand (FoD).** Materialisera inte platshållare för att "lösa" flytten. Utöka aldrig mängden lokalt speglade filer. Verifiering ska vara status-medveten.
-4. **Källan är rollback-baslinjen tills den bevisats umbärlig.** Radering/flytt av källan tidsgrindas (A3) och kräver uttryckligt godkännande (A1).
-5. **Dry-run är default.** Varje destruktivt steg är opt-in (`-Execute`).
+1. **The cloud is ground truth and is never touched.** No mass deletion, no "Download all files", no structural change in the cloud during the move.
+2. **Use the client's own move function — never junction/symlink.** A sync engine tracks folder identity via NTFS file-id; a junction or a robocopy-moved root can be interpreted as "content deleted" → the cloud gets trashed. The client's "Change location"/"Choose location" moves the data folder and preserves the sync identity.
+3. **Preserve Files-On-Demand (FoD).** Do not materialize placeholders to "fix" the move. Never expand the set of locally mirrored files. Verification must be status-aware.
+4. **The source is the rollback baseline until proven expendable.** Deletion/move of the source is time-gated (A3) and requires explicit approval (A1).
+5. **Dry-run is the default.** Every destructive step is opt-in (`-Execute`).
 
-## 1. Beslutsträd — vilken metod?
+## 1. Decision tree — which method?
 
 ```
-Stödjer klienten en inbyggd "byt plats för datamappen"?
-├── JA  -> Använd den (Metod A). Detta är enda stödda vägen för OneDrive,
-│         och motsvarande "byt mapp"-inställning finns i Google Drive.
-└── NEJ -> Eskalera. Flytta INTE via junction/symlink/robocopy av en aktiv
-          synkrot. Överväg att pausa tjänsten, flytta, och konfigurera om
-          via klientens inställningar — aldrig på filsystemnivå bakom klientens rygg.
+Does the client support a built-in "change the data folder location"?
+├── YES -> Use it (Method A). This is the only supported path for OneDrive,
+│         and the equivalent "change folder" setting exists in Google Drive.
+└── NO  -> Escalate. Do NOT move via junction/symlink/robocopy of an active
+          sync root. Consider pausing the service, moving, and reconfiguring
+          via the client's settings — never at the filesystem level behind the client's back.
 ```
 
-Junction som *kompatibilitetslager för gamla sökvägar* (så att script som pekar på den gamla platsen fortsätter fungera) är OK — men skapas EFTER att klienten flyttat datamappen och den gamla mappen tömts, aldrig som själva flyttmekanismen.
+A junction as a *compatibility layer for old paths* (so that scripts pointing at the old location keep working) is OK — but it is created AFTER the client has moved the data folder and the old folder has been emptied, never as the move mechanism itself.
 
-## 2. Riskklassning
+## 2. Risk classification
 
-Detta är en **riskhöjd, irreversibel filoperation** (B12.2): stora datamängder, extern tjänst, potentiell dataförlust. Full DEL A gäller. Kräver: dry-run, tydlig loggning, uttryckligt godkännande före varje destruktivt steg, och en dokumenterad rollback-väg.
+This is a **risk-elevated, irreversible file operation** (B12.2): large data volumes, external service, potential data loss. Full PART A applies. Requires: dry-run, clear logging, explicit approval before every destructive step, and a documented rollback path.
 
-## 3. Fasmodellen
+## 3. The phase model
 
-Mönstret: **inventera (läs) → baslinje → preflight → flytta (klienten) → verifiera struktur → verifiera innehåll (hydrerings-medvetet) → moln-facit → grinda radering av källan.** Långkörande steg startas frånkopplat (background job) så att en kommandobrygga-timeout inte avbryter mitt i.
+The pattern: **inventory (read) → baseline → preflight → move (the client) → verify structure → verify content (hydration-aware) → cloud ground truth → gate deletion of the source.** Long-running steps are started detached (background job) so that a command-bridge timeout does not interrupt midway.
 
-### Fas 0 — Inventering (ren läsning)
-Enumerera hela källan med `[System.IO.Directory]::EnumerateFiles(...)` och klassa varje fil **enbart på attribut** — läs aldrig innehåll:
+### Phase 0 — Inventory (read-only pass)
+Enumerate the entire source with `[System.IO.Directory]::EnumerateFiles(...)` and classify each file **on attributes alone** — never read content:
 
-| Status | Attribut | Betyder |
+| Status | Attribute | Meaning |
 |---|---|---|
-| online-only | `RECALL` = 0x400000 satt | 0-byte platshållare, bara i molnet |
-| always-keep | `PINNED` = 0x80000 satt | pinnad "behåll alltid på enheten" |
-| local-available | ingetdera | materialiserad men inte pinnad |
+| online-only | `RECALL` = 0x400000 set | 0-byte placeholder, cloud only |
+| always-keep | `PINNED` = 0x80000 set | pinned "always keep on this device" |
+| local-available | neither | materialized but not pinned |
 
-Skriv CSV (RelPath, SizeBytes, LastWriteUtc, AttrHex, Status) + en pinlist (alla icke-online-only). **Drift-check (bilaga):** för varje schemalagt jobb som *ska* skriva regelbundet, jämför jobbets `LastRunTime` mot dess datafilers `LastWriteTime`. Gap > ett par dagar = pre-existerande tyst fel som ska åtgärdas FÖRE flytten, annars blandas felklasser i efterverifieringen.
+Write a CSV (RelPath, SizeBytes, LastWriteUtc, AttrHex, Status) + a pinlist (all non-online-only). **Drift check (appendix):** for each scheduled job that *should* write regularly, compare the job's `LastRunTime` against its data files' `LastWriteTime`. A gap > a couple of days = a pre-existing silent failure that must be fixed BEFORE the move, otherwise error classes get mixed up in the post-verification.
 
-### Fas 1 — MD5-baslinje av lokala filer
-Beräkna MD5 för **enbart** local-available + always-keep (de som faktiskt finns lokalt). Använd `[System.Security.Cryptography.MD5]` (.NET) — INTE `Get-FileHash` (se felmekanism 4). Skriv CSV (RelPath, MD5, Size). Detta är facit för efterverifieringen.
+### Phase 1 — MD5 baseline of local files
+Compute MD5 for **only** local-available + always-keep (the ones that actually exist locally). Use `[System.Security.Cryptography.MD5]` (.NET) — NOT `Get-FileHash` (see failure mechanism 4). Write a CSV (RelPath, MD5, Size). This is the ground truth for the post-verification.
 
-### Fas 2 — Preflight
-Grinda på: (a) synken är "Uppdaterad"/"Up to date" (inga väntande ändringar), (b) fri plats på målet räcker för de lokala filerna (inte hela molnet — FoD bevaras), (c) skrivbarhets-probe på målet (skriv+radera testfil, A4), (d) disktyp på målet (varna för SMR — se felmekanism 6), (e) säkra en moln-baslinje via providerns API (driveId + använd kvot som facit). Bind aldrig till en enhetsbokstav som kan driva.
+### Phase 2 — Preflight
+Gate on: (a) the sync is "Uppdaterad"/"Up to date" (no pending changes), (b) free space on the target is sufficient for the local files (not the whole cloud — FoD is preserved), (c) writability probe on the target (write+delete a test file, A4), (d) disk type on the target (warn for SMR — see failure mechanism 6), (e) secure a cloud baseline via the provider's API (driveId + used quota as ground truth). Never bind to a drive letter that can drift.
 
-### Fas 3 — Avlänka
-Avlänka kontot i klienten (molnet orört, lokala filer ligger kvar). Granska eventuella egna script för destruktiva ops mot den gamla sökvägen innan omkonfiguration.
+### Phase 3 — Unlink
+Unlink the account in the client (the cloud untouched, the local files remain). Review any custom scripts for destructive ops against the old path before reconfiguration.
 
-### Fas 4 — Länka om + Välj plats
-Länka om kontot och peka datamappen på målet. **Alla filer är initialt platshållare** — gör INGEN MD5 här (status-medveten: det finns inget innehåll att hasha ännu). Låt klienten bygga upp trädet.
+### Phase 4 — Relink + Choose location
+Relink the account and point the data folder at the target. **All files are initially placeholders** — do NO MD5 here (status-aware: there is no content to hash yet). Let the client rebuild the tree.
 
-### Fas 5 — Strukturverifiering
-Bygg ett `HashSet` av målets relativa sökvägar och diffa mot fas-0-facit. Förvänta att "missing" domineras av icke-synkade skräpfiler (Thumbs.db, `~$`-Office-temp, desktop.ini, `.tmp`) — klassa och räkna dem, verkliga saknade filer ska vara ~0.
+### Phase 5 — Structure verification
+Build a `HashSet` of the target's relative paths and diff against the phase-0 ground truth. Expect "missing" to be dominated by non-synced junk files (Thumbs.db, `~$` Office temp, desktop.ini, `.tmp`) — classify and count them; real missing files should be ~0.
 
-### Fas 6 — Hydrerings-medveten efterverifiering
-Återpinna always-keep (`attrib +P`, se felmekanism 5), vänta in hydreringen, kör sedan full MD5-verify mot fas-1-baslinjen. **Kör inte verifieringen medan filer hydreras** — ett stickprov måste visa 0 online-only först, annars blir det falska fel (felmekanism 3). Schemalägg gärna en åter-kontroll var/varannan timme tills hydreringen lugnat sig.
+### Phase 6 — Hydration-aware post-verification
+Re-pin always-keep (`attrib +P`, see failure mechanism 5), wait out the hydration, then run a full MD5 verify against the phase-1 baseline. **Do not run the verification while files are hydrating** — a spot check must show 0 online-only first, otherwise you get false errors (failure mechanism 3). It's good to schedule a re-check every hour or two until the hydration settles down.
 
-### Fas 6b — Kända mappar (om tillämpligt)
-Om skrivbord/dokument/bilder är omdirigerade in i synkmappen (Known Folder Move): peka om dem till den nya platsen via `SHSetKnownFolderPath` (shell32) och verifiera med `GetFolderPath`.
+### Phase 6b — Known folders (if applicable)
+If desktop/documents/pictures are redirected into the sync folder (Known Folder Move): re-point them to the new location via `SHSetKnownFolderPath` (shell32) and verify with `GetFolderPath`.
 
-### Fas 7 — Övervakad drift
-Kör tjänsten övervakat. Utred eventuell felräknare (se avsnitt 7 — oftast throttling, inte dataproblem).
+### Phase 7 — Monitored operation
+Run the service monitored. Investigate any error counter (see section 7 — usually throttling, not a data problem).
 
-### Fas 8/9 — Tidsgrindad radering/flytt av källan
-Först efter N dygns stabil synk (config `min_stable_days`) + uttryckligt `-Execute`: **flytta** (inte radera) den gamla datamappen och cachen till en backup-plats, töm sedan. Skapa ev. kompatibilitets-junction för gamla sökvägar. Radera backupen långt senare.
+### Phase 8/9 — Time-gated deletion/move of the source
+Only after N days of stable sync (config `min_stable_days`) + explicit `-Execute`: **move** (not delete) the old data folder and the cache to a backup location, then empty it. Optionally create a compatibility junction for old paths. Delete the backup much later.
 
-## 4. Felmekanismer och fällor
+## 4. Failure mechanisms and traps
 
-1. **Sync-motor + junction = inode-/identitetsfälla.** Aldrig junction som flyttmetod för en aktiv synkmapp.
-2. **FoD-platshållarfälla.** Online-only-filer är 0-byte; en naiv kopiering/jämförelse ger falskt grönt "verify" och naiv kopiering kan trigga masshydrering som spränger måldisken. Flyttmetoden får inte materialisera platshållare; verifiering ska vara status-medveten.
-3. **Hydrerings-race vid MD5.** Verifiera först när ett stickprov visar 0 online-only.
-4. **`Get-FileHash` saknas i spawnad process.** `Start-Process powershell.exe` (5.1) autoladdar inte moduler → `Get-FileHash` "not recognized". Använd `[System.Security.Cryptography.MD5]` (.NET).
-5. **`SetAttributes` kan inte sätta klientens PINNED-bit.** `.NET File.SetAttributes` misslyckas för moln-PINNED (0x80000). Använd `& attrib.exe +P <fil>` för att pinna (starta hydrering).
-6. **SMR-disk churnar under synk.** SMR-arkivdiskar (vissa stora billiga SATA-modeller) är usla på många små slumpvisa skrivningar. En aktivt synkad mapp på SMR ger 100 % diskaktivitet och GUI-lagg. Undvik SMR som mål för en aktiv synkmapp; sänk annars nedladdningshastigheten och styr synk till idle-tid.
-7. **Live WAL-databaser får aldrig öppnas read-write.** Se avsnitt 7.
+1. **Sync engine + junction = inode/identity trap.** Never a junction as the move method for an active sync folder.
+2. **FoD placeholder trap.** Online-only files are 0-byte; a naive copy/comparison gives a false green "verify", and a naive copy can trigger mass hydration that blows up the target disk. The move method must not materialize placeholders; verification must be status-aware.
+3. **Hydration race at MD5.** Verify only once a spot check shows 0 online-only.
+4. **`Get-FileHash` missing in a spawned process.** `Start-Process powershell.exe` (5.1) does not auto-load modules → `Get-FileHash` "not recognized". Use `[System.Security.Cryptography.MD5]` (.NET).
+5. **`SetAttributes` cannot set the client's PINNED bit.** `.NET File.SetAttributes` fails for cloud-PINNED (0x80000). Use `& attrib.exe +P <file>` to pin (start hydration).
+6. **SMR disk churns during sync.** SMR archive disks (some large cheap SATA models) are terrible at many small random writes. An actively synced folder on SMR gives 100% disk activity and GUI lag. Avoid SMR as a target for an active sync folder; otherwise lower the download speed and steer sync to idle time.
+7. **Live WAL databases must never be opened read-write.** See section 7.
 
-## 5. Verifieringsmetoder (bevisa noll dataförlust)
+## 5. Verification methods (prove zero data loss)
 
-- **Attribut-klassning** (fas 0) — ren läsning, ingen innehållsåtkomst.
-- **MD5 före/efter** på lokala filer — fånga mismatch. Enhetsberoende genvägar (t.ex. Personal Vault-`.lnk`) regenereras per maskin → förväntad "mismatch", vitlista.
-- **Strukturdiff** — relativ-sökväg-set källa mot mål.
-- **Moln-facit via providerns API** — jämför kvot/objekt-ID före/efter; diff = 0 bevisar att molnet är orört.
+- **Attribute classification** (phase 0) — read-only pass, no content access.
+- **MD5 before/after** on local files — catch mismatches. Device-dependent shortcuts (e.g. Personal Vault `.lnk`) are regenerated per machine → expected "mismatch", whitelist them.
+- **Structure diff** — relative-path set source vs target.
+- **Cloud ground truth via the provider's API** — compare quota/object-ID before/after; diff = 0 proves the cloud is untouched.
 
-## 6. Rollback-fönster (A3)
+## 6. Rollback window (A3)
 
-Källan är en **full rollback-baslinje** så länge destinationen bara tar emot en passiv kopia. I samma sekund som destinationen tar över produktion (klienten synkar aktivt, nya skrivningar sker mot målet) divergerar källa och mål. Rollback till källan förlorar då nya skrivningar. Därför: håll källan tills synken bevisats stabil i flera dygn, och grinda dess radering på tid + godkännande. Vid behov: databack-steg (kopiera nyaste data från målet tillbaka) eller dokumenterad accept av dataloss i en ADR.
+The source is a **full rollback baseline** as long as the destination only receives a passive copy. The instant the destination takes over production (the client syncs actively, new writes go to the target), source and target diverge. A rollback to the source then loses the new writes. Therefore: keep the source until the sync has been proven stable for several days, and gate its deletion on time + approval. If needed: a data-back step (copy the newest data from the target back) or a documented acceptance of data loss in an ADR.
 
-## 7. Synkfel-diagnos — throttling vs riktiga fel
+## 7. Sync-error diagnosis — throttling vs real errors
 
-En hög felräknare i klienten under/efter en flytt är oftast **transient throttling** från masshydrering, inte dataproblem. Verifiera mot motorns TILLSTÅND, inte mot UI:t:
+A high error counter in the client during/after a move is usually **transient throttling** from mass hydration, not a data problem. Verify against the engine's STATE, not against the UI:
 
-- **Tillståndskälla (bäst):** klientens SQLite-databaser i `settings\<konto>\`. Läs `SyncEngineDatabase.db` (per-fil-status, operationshistorik) och motsvarande "sync issues"-DB. **Läs aldrig live read-write** (WAL-läge, öppen av klienten): ta snapshot-kopia (db + `-wal` + `-shm`) och läs kopian, eller öppna live med `immutable=1&mode=ro`.
-- **Rent tillstånd ser ut så här:** 0 konflikter, per-fil-status endast "synkad"-värden, 0 mappfel, 0 "unrealized". Då finns inga hårda fel.
-- **Throttling ser ut så här:** operationshistorikens `resultCode` innehåller 429 (Too Many Requests) / 403 (Forbidden) på `Download`/`ActiveHydration`-scenarier, + en throttle-historik-tabell med `ThrottledRequest_*`-rader, daterade till hydreringslasten. Slutsats: räknaren faller mot noll när hydreringen är klar. Åtgärd: vänta, ev. sänk nedladdningshastigheten.
-- **Loggar:** nyare klientloggar kan vara klartext (t.ex. OneDrives `.aodl`, magic `EBFGONED`); providerns moln-API exponerar normalt inga per-klient-synkloggar.
+- **State source (best):** the client's SQLite databases in `settings\<account>\`. Read `SyncEngineDatabase.db` (per-file status, operation history) and the corresponding "sync issues" DB. **Never read live read-write** (WAL mode, open by the client): take a snapshot copy (db + `-wal` + `-shm`) and read the copy, or open live with `immutable=1&mode=ro`.
+- **Clean state looks like this:** 0 conflicts, per-file status only "synced" values, 0 folder errors, 0 "unrealized". Then there are no hard errors.
+- **Throttling looks like this:** the operation history's `resultCode` contains 429 (Too Many Requests) / 403 (Forbidden) on `Download`/`ActiveHydration` scenarios, + a throttle-history table with `ThrottledRequest_*` rows, dated to the hydration load. Conclusion: the counter falls toward zero once the hydration is done. Action: wait, optionally lower the download speed.
+- **Logs:** newer client logs may be cleartext (e.g. OneDrive's `.aodl`, magic `EBFGONED`); the provider's cloud API normally exposes no per-client sync logs.
 
-Detaljerad, återanvändbar diagnostik: `03_src/py/read_sync_state.py` + `03_src/ps/Read-OneDriveSyncState.ps1`.
+Detailed, reusable diagnostics: `03_src/py/read_sync_state.py` + `03_src/ps/Read-OneDriveSyncState.ps1`.
 
-## 8. Anti-mönster (gör inte)
+## 8. Anti-patterns (do not)
 
-- Flytta via junction/symlink/robocopy av en aktiv synkrot.
-- "Ladda ner alla filer" för att göra flytten "säkrare" (spränger disk, ändrar inget i molnet men river FoD).
-- MD5-verifiera medan hydrering pågår.
-- Radera källan direkt efter flytt (behåll som baslinje i N dygn).
-- Öppna klientens live-databaser read-write.
-- Lägg en aktiv synkmapp på en SMR-disk.
+- Move via junction/symlink/robocopy of an active sync root.
+- "Download all files" to make the move "safer" (blows up the disk, changes nothing in the cloud but tears down FoD).
+- MD5-verify while hydration is in progress.
+- Delete the source right after the move (keep it as a baseline for N days).
+- Open the client's live databases read-write.
+- Place an active sync folder on an SMR disk.
 
-## 9. Loggparsers (diagnos-komplement)
+## 9. Log parsers (diagnostic complement)
 
-Tillståndsläsning (avsnitt 7) räcker för de flesta diagnoser, men loggströmmen ger detaljer och tidiga varningar:
+State reading (section 7) is enough for most diagnoses, but the log stream gives details and early warnings:
 
-- **OneDrive:** `Read-OneDriveLogs.ps1` + `parse_odl.py` läser ODL-loggarna. `.aodl` är klartext (magic `EBFGONED`), `.odlgz` är gzip. Full av-obfuskering av filvägar kräver leverantörens strängkarta och är sällan värd besväret — scenarionamn + HTTP-koder (429/403) räcker för att bekräfta throttling.
-- **Google Drive:** `Read-GoogleDriveLogs.ps1` skannar `drive_fs.txt` efter `MIRROR_GDOC_DELETED` (molnradering) och `changed inode` (identitetsändring). Detta är den enda tidiga varningen för inode-fällan — kör det före och under en Drive-flytt.
+- **OneDrive:** `Read-OneDriveLogs.ps1` + `parse_odl.py` read the ODL logs. `.aodl` is cleartext (magic `EBFGONED`), `.odlgz` is gzip. Full de-obfuscation of file paths requires the vendor's string map and is rarely worth the trouble — scenario names + HTTP codes (429/403) are enough to confirm throttling.
+- **Google Drive:** `Read-GoogleDriveLogs.ps1` scans `drive_fs.txt` for `MIRROR_GDOC_DELETED` (cloud deletion) and `changed inode` (identity change). This is the only early warning for the inode trap — run it before and during a Drive move.

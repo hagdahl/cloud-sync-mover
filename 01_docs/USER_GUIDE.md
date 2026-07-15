@@ -1,73 +1,73 @@
-# USER_GUIDE — köra en flytt steg för steg
+# USER_GUIDE — running a move step by step
 
-> **Varning:** riskfyllda filoperationer - använd på egen risk, ha verifierad backup, kör dry-run först. Se `DISCLAIMER.md`.
+> **Warning:** risky file operations - use at your own risk, have a verified backup, run a dry-run first. See `DISCLAIMER.md`.
 
-> Läs `01_docs/PLAYBOOK.md` först. Detta är den operativa checklistan. Varje destruktivt steg kräver `-Execute`; utan den flaggan är allt dry-run.
+> Read `01_docs/PLAYBOOK.md` first. This is the operational checklist. Every destructive step requires `-Execute`; without that flag everything is a dry-run.
 
-## Förberedelse
-1. Kopiera `config.example` → `config.local`. Fyll i:
-   - `source_root` = nuvarande synkmapp (t.ex. `C:\Users\<user>\OneDrive`)
-   - `target_root` = ny plats (snabb, rymlig, **ej SMR**-disk)
-   - `work_dir` = lokal arbetsmapp för artefakter (INTE i synkmappen)
+## Preparation
+1. Copy `config.example` → `config.local`. Fill in:
+   - `source_root` = current sync folder (e.g. `C:\Users\<user>\OneDrive`)
+   - `target_root` = new location (fast, roomy, **not an SMR** disk)
+   - `work_dir` = local working folder for artifacts (NOT in the sync folder)
    - `provider.name` = `onedrive-personal` | `onedrive-business` | `google-drive`
-2. Se till att klienten visar **"Uppdaterad"/"Up to date"** (inga väntande ändringar).
+2. Make sure the client shows **"Uppdaterad"/"Up to date"** (no pending changes).
 
-## Kör faserna
+## Run the phases
 
-Orkestrerare (visar plan, kör läs-faser, stannar före destruktiva steg):
+Orchestrator (shows the plan, runs the read-only passes, stops before destructive steps):
 ```
 powershell -File 03_src\ps\Invoke-CloudSyncMove.ps1 -Config .\config.local
 ```
 
-Eller fas för fas:
+Or phase by phase:
 
-1. **Fas 0 — inventering (ofarlig):**
+1. **Phase 0 — inventory (safe):**
    `powershell -File 03_src\ps\Invoke-Inventory.ps1 -Config .\config.local`
-   Kontrollera `inventory_<ts>.csv` + drift-varningar.
+   Check `inventory_<ts>.csv` + drift warnings.
 
-2. **Fas 1 — MD5-baslinje (ofarlig, kan ta tid):**
+2. **Phase 1 — MD5 baseline (safe, can take time):**
    `powershell -File 03_src\ps\Invoke-Md5Baseline.ps1 -Config .\config.local`
-   Startas som background job för stora set.
+   Started as a background job for large sets.
 
-3. **Fas 2 — preflight (ofarlig):**
+3. **Phase 2 — preflight (safe):**
    `powershell -File 03_src\ps\Test-MovePreflight.ps1 -Config .\config.local`
-   Alla grindar måste vara gröna (fri plats, skrivbarhet, up-to-date, disktyp).
+   All gates must be green (free space, writability, up-to-date, disk type).
 
-4. **Flytten (manuell, Metod A):** följ `PROVIDER-NOTES.md` för din klient — avlänka, länka om, Välj plats → `target_root`. Verktyget flyttar INTE åt dig (klienten måste äga flytten).
+4. **The move (manual, Method A):** follow `PROVIDER-NOTES.md` for your client — unlink, relink, Change location → `target_root`. The tool does NOT move it for you (the client must own the move).
 
-5. **Fas 5 — strukturverifiering:**
+5. **Phase 5 — structure verification:**
    `powershell -File 03_src\ps\Compare-MoveStructure.ps1 -Config .\config.local`
-   "missing" ska domineras av skräp (Thumbs.db/`~$`/desktop.ini/`.tmp`), verkliga saknade ~0.
+   "missing" should be dominated by junk (Thumbs.db/`~$`/desktop.ini/`.tmp`), truly missing ~0.
 
-6. **Fas 6 — hydrerings-medveten efterverify:**
+6. **Phase 6 — hydration-aware post-verify:**
    `powershell -File 03_src\ps\Invoke-HydrationVerify.ps1 -Config .\config.local`
-   Kör om tills stickprov = 0 online-only, sedan full MD5-jämförelse. Kan schemaläggas var 2h.
+   Re-run until the spot check = 0 online-only, then a full MD5 comparison. Can be scheduled every 2h.
 
-7. **Diagnos vid felräknare (OneDrive):**
+7. **Diagnosis on error counters (OneDrive):**
    `powershell -File 03_src\ps\Read-OneDriveSyncState.ps1 -Config .\config.local`
-   Skiljer throttling från riktiga fel (se PLAYBOOK 7).
+   Distinguishes throttling from real errors (see PLAYBOOK 7).
 
-8. **Fas 8/9 — grinda bort källan (destruktivt, tidsgrindat):**
-   Först efter `min_stable_days` dygn stabil synk:
+8. **Phase 8/9 — gate out the source (destructive, time-gated):**
+   Only after `min_stable_days` days of stable sync:
    `powershell -File 03_src\ps\Invoke-CloudSyncMove.ps1 -Config .\config.local -Phase retire-source -Execute`
-   Flyttar (inte raderar) gamla källan till backup, tömmer sedan. Radera backupen långt senare.
+   Moves (does not delete) the old source to backup, then empties it. Delete the backup much later.
 
-## Nödstopp (A7)
+## Emergency stop (A7)
 ```
-powershell -File 03_src\ps\stop_all_jobs.ps1     # pausar/stoppar synkklient + toolkit-jobb
-powershell -File 03_src\ps\start_all_jobs.ps1    # återstartar kontrollerat
+powershell -File 03_src\ps\stop_all_jobs.ps1     # pauses/stops the sync client + toolkit jobs
+powershell -File 03_src\ps\start_all_jobs.ps1    # restarts in a controlled manner
 ```
 
-## Om något ser fel ut
-- Tom måldestination men "verify" grönt → FoD-platshållare (PLAYBOOK felmek. 2). Kör hydrerings-medveten verify.
-- MD5-fel i mängd → troligen hydrering pågår (felmek. 3), vänta.
-- Klienten visar hundratals "synkfel" → kör state-diagnosen; nästan alltid throttling (PLAYBOOK 7).
+## If something looks wrong
+- Empty target destination but "verify" green → FoD placeholders (PLAYBOOK error mech. 2). Run the hydration-aware verify.
+- MD5 errors en masse → hydration probably in progress (error mech. 3), wait.
+- The client shows hundreds of "sync errors" → run the state diagnosis; almost always throttling (PLAYBOOK 7).
 
-## 7b. Loggdiagnos (djupare)
+## 7b. Log diagnosis (deeper)
 
-- **OneDrive ODL-loggar (throttling-detaljer):**
+- **OneDrive ODL logs (throttling details):**
   `powershell -File 03_src\ps\Read-OneDriveLogs.ps1 -Config .\config.local`
-  Räknar 429/403/throttle-termer + `Download`/`ActiveHydration`-scenarier ur `.aodl`/`.odlgz`.
-- **Google Drive inode-/raderingsvarning (kör FÖRE/under en Drive-flytt):**
+  Counts 429/403/throttle terms + `Download`/`ActiveHydration` scenarios from `.aodl`/`.odlgz`.
+- **Google Drive inode/deletion warning (run BEFORE/during a Drive move):**
   `powershell -File 03_src\ps\Read-GoogleDriveLogs.ps1`
-  Hittar `MIRROR_GDOC_DELETED` / `changed inode` i `drive_fs.txt`. Växer `MIRROR_GDOC_DELETED` → stoppa Drive omedelbart (`stop_all_jobs.ps1`) och följ återställningsnoterna.
+  Finds `MIRROR_GDOC_DELETED` / `changed inode` in `drive_fs.txt`. If `MIRROR_GDOC_DELETED` grows → stop Drive immediately (`stop_all_jobs.ps1`) and follow the recovery notes.

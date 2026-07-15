@@ -1,36 +1,36 @@
-# PROVIDER-NOTES — tjänstespecifika detaljer
+# PROVIDER-NOTES — service-specific details
 
-Det enda specifika i detta projekt är vilka tjänster och klientversioner det är testat mot. Inga miljöer, personer eller system nämns.
+The only thing specific to this project is which services and client versions it has been tested against. No environments, people, or systems are mentioned.
 
-## OneDrive (Personal och Business)
+## OneDrive (Personal and Business)
 
-- **Flyttmetod:** Metod A — Inställningar → Konto → **Avlänka den här datorn**, kör sedan om inloggningen och välj **Välj plats/Change location** → peka på måldisken. Detta är enda av Microsoft stödda vägen. Junction/symlink stöds inte. Cachen kan inte flyttas — den byggs om på ny plats (vid behov via Reset).
-- **Testade klientversioner:** 26.106.0603.0003 och 26.108.0607.0002 (Windows).
-- **Files-On-Demand-attribut:** online-only = `FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS` (0x400000); pinnad "behåll alltid" = `FILE_ATTRIBUTE_PINNED` (0x80000). Pinna med `attrib +P` (ej `.NET SetAttributes`).
-- **Tillstånd/diagnos:** `%LOCALAPPDATA%\Microsoft\OneDrive\settings\<konto>\` — SQLite. Nyckelfiler: `SyncEngineDatabase.db` (tabeller `od_ClientFile_Records.fileStatus`, `od_ServiceOperationHistory.resultCode/scenarioName`, `od_ThrottleHistory`), `OCSI.db` (`ocsi_property_records.conflictJson`). Konton: `Personal`, `Business1`, ...
-- **Loggar:** `%LOCALAPPDATA%\Microsoft\OneDrive\logs\<konto>\` — `.aodl` (klartext, magic `EBFGONED`), `.odlgz` (gzip).
-- **Known Folder Move:** om Skrivbord/Dokument/Bilder är omdirigerade in i OneDrive, peka om via `SHSetKnownFolderPath` (shell32) efter flytten.
-- **Moln-facit:** Microsoft Graph, `Connect-MgGraph -Scopes Files.Read`, `Invoke-MgGraphRequest` mot `/me/drive` (kvot). Graph exponerar inga synkloggar.
+- **Move method:** Method A — Settings → Account → **Unlink this PC**, then re-run the sign-in and choose **Change location** → point to the target disk. This is the only path supported by Microsoft. Junction/symlink is not supported. The cache cannot be moved — it is rebuilt in the new location (via Reset if needed).
+- **Tested client versions:** 26.106.0603.0003 and 26.108.0607.0002 (Windows).
+- **Files-On-Demand attributes:** online-only = `FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS` (0x400000); pinned "always keep" = `FILE_ATTRIBUTE_PINNED` (0x80000). Pin with `attrib +P` (not `.NET SetAttributes`).
+- **State/diagnostics:** `%LOCALAPPDATA%\Microsoft\OneDrive\settings\<account>\` — SQLite. Key files: `SyncEngineDatabase.db` (tables `od_ClientFile_Records.fileStatus`, `od_ServiceOperationHistory.resultCode/scenarioName`, `od_ThrottleHistory`), `OCSI.db` (`ocsi_property_records.conflictJson`). Accounts: `Personal`, `Business1`, ...
+- **Logs:** `%LOCALAPPDATA%\Microsoft\OneDrive\logs\<account>\` — `.aodl` (plain text, magic `EBFGONED`), `.odlgz` (gzip).
+- **Known Folder Move:** if Desktop/Documents/Pictures are redirected into OneDrive, re-point via `SHSetKnownFolderPath` (shell32) after the move.
+- **Cloud ground truth:** Microsoft Graph, `Connect-MgGraph -Scopes Files.Read`, `Invoke-MgGraphRequest` against `/me/drive` (quota). Graph exposes no sync logs.
 
-## Google Drive för desktop
+## Google Drive for desktop
 
-- **Flyttmetod:** byt mappens plats i klientens **inställningar** (motsvarar Metod A). Streaming-läge (File Stream) håller inget lokalt; spegelläge (Mirror) speglar lokalt.
-- **Testad generation:** 2024–2025-klienten.
-- **Kritisk lärdom (inode-fällan):** flytta ALDRIG en spegel-mapp via junction eller robocopy och starta klienten mot den — klienten tolkar ändrad rotidentitet som "innehållet raderat" och lägger objekt i molnets papperskorg, och kan platta ut mappstrukturen. Håll klienten helt avstängd tills moln och lokalt är konsekventa; återställ i molnet parent-first om något trashats.
-- **Diskval:** en aktivt synkad Drive-spegel på en SMR-disk ger 100 % diskaktivitet — undvik.
-- **Loggar:** `%LOCALAPPDATA%\Google\DriveFS\Logs\drive_fs.txt` (klartext) — sök `MIRROR_GDOC_DELETED` (radering), `changed inode` (identitetsändring).
+- **Move method:** change the folder's location in the client's **settings** (equivalent to Method A). Streaming mode (File Stream) keeps nothing locally; mirror mode (Mirror) mirrors locally.
+- **Tested generation:** the 2024–2025 client.
+- **Critical lesson (the inode trap):** NEVER move a mirror folder via junction or robocopy and start the client against it — the client interprets the changed root identity as "the content was deleted" and puts objects in the cloud trash, and can flatten the folder structure. Keep the client completely shut down until cloud and local are consistent; restore in the cloud parent-first if anything was trashed.
+- **Disk choice:** an actively synced Drive mirror on an SMR disk gives 100% disk activity — avoid.
+- **Logs:** `%LOCALAPPDATA%\Google\DriveFS\Logs\drive_fs.txt` (plain text) — search `MIRROR_GDOC_DELETED` (deletion), `changed inode` (identity change).
 
-## Generellt
-Vilken provider som helst med Files-On-Demand + en inbyggd "byt plats"-funktion passar mönstret. Har klienten ingen sådan funktion: eskalera, flytta aldrig bakom klientens rygg.
+## General
+Any provider with Files-On-Demand + a built-in "change location" function fits the pattern. If the client has no such function: escalate, never move behind the client's back.
 
-## Loggplatser och parsers
+## Log locations and parsers
 
-| Tjänst | Loggplats | Parser i detta projekt |
+| Service | Log location | Parser in this project |
 |---|---|---|
-| OneDrive | `%LOCALAPPDATA%\Microsoft\OneDrive\logs\<konto>\*.aodl/.odlgz` | `Read-OneDriveLogs.ps1` + `parse_odl.py` |
+| OneDrive | `%LOCALAPPDATA%\Microsoft\OneDrive\logs\<account>\*.aodl/.odlgz` | `Read-OneDriveLogs.ps1` + `parse_odl.py` |
 | Google Drive | `%LOCALAPPDATA%\Google\DriveFS\Logs\drive_fs.txt` | `Read-GoogleDriveLogs.ps1` |
 
-## OneDrive - diagnostik-noter
+## OneDrive - diagnostics notes
 
-- **Felräknaren är inte persisterad.** Klientens "N synkfel" hämtas live av UI:t via ett internt localhost-anrop (`ActivityCenter/getErrors`) och sparas **inte** som en tabell. Det går alltså inte att "dumpa N felrader" från disk - läs synkmotorns tillstånd (`Read-OneDriveSyncState.ps1`) eller skrolla Activity Center-panelen.
-- **Fel kan ligga på ett annat konto.** Ett vilande jobb/skol-konto (`settings\Business1\`) kan bidra till räknaren även om det personliga är rent. `Read-OneDriveSyncState.ps1` / `read_sync_state.py` enumererar därför alla `settings\<konto>`-mappar, inte bara Personal.
+- **The error counter is not persisted.** The client's "N sync errors" is fetched live by the UI via an internal localhost call (`ActivityCenter/getErrors`) and is **not** saved as a table. It is therefore not possible to "dump N error rows" from disk - read the sync engine state (`Read-OneDriveSyncState.ps1`) or scroll the Activity Center panel.
+- **Errors may sit on another account.** A dormant work/school account (`settings\Business1\`) can contribute to the counter even if the personal one is clean. `Read-OneDriveSyncState.ps1` / `read_sync_state.py` therefore enumerates all `settings\<account>` folders, not just Personal.
