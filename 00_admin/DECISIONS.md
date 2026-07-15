@@ -1,43 +1,49 @@
-# DECISIONS (ADR-logg)
+# DECISIONS (ADR log)
 
-Kort ADR per beslut. Format: kontext → beslut → konsekvens.
+Short ADR per decision. Format: context → decision → consequence.
 
-## ADR-000 — Bantad projektstruktur (avsteg från full B9)
-**Kontext:** B9 säger att standardstrukturen ska anpassas efter projekttyp; detta är ett verktygslåde-/kunskapsprojekt, inte en datapipeline.
-**Beslut:** behåll `00_admin`, `01_docs`, `03_src` (ps+py), `04_tests/validation`, `_sources`. Utelämna `02_data/` och `04_tests/fixtures`; CSV-scheman ligger i `01_docs/DATA-FORMATS.md`. Verktygens utdata skrivs till en extern `work_dir`, inte i repo.
-**Konsekvens:** slankare repo utan tomma mappar. Avsteget dokumenterat här enligt B9.
+## ADR-000 — Slimmed-down project structure (deviation from full B9)
+**Context:** B9 says the standard structure should be adapted to the project type; this is a toolkit/knowledge project, not a data pipeline.
+**Decision:** keep `00_admin`, `01_docs`, `03_src` (ps+py), `04_tests/validation`, `_sources`. Omit `02_data/` and `04_tests/fixtures`; CSV schemas live in `01_docs/DATA-FORMATS.md`. The tools' output is written to an external `work_dir`, not in the repo.
+**Consequence:** a leaner repo without empty folders. The deviation is documented here per B9.
 
-## ADR-001 — Metod A (klientens flytt), aldrig junction
-**Kontext:** en synkmotor spårar mappidentitet via NTFS file-id; en junction/robocopy-flyttad rot kan tolkas som "innehållet raderat" → molnradering (bevisat i Google Drive-flytten).
-**Beslut:** flytta alltid via klientens egen "byt plats"-funktion; junction endast som kompatibilitetslager efteråt.
-**Konsekvens:** ingen inode-fälla; enda stödda vägen för OneDrive.
+## ADR-001 — Method A (the client's move), never a junction
+**Context:** a sync engine tracks folder identity via the NTFS file-id; a junction/robocopy-moved root can be interpreted as "the content deleted" → cloud deletion (proven in the Google Drive move).
+**Decision:** always move via the client's own "change location" function; junctions only as a compatibility layer afterwards.
+**Consequence:** no inode trap; the only supported path for OneDrive.
 
-## ADR-002 — Files-On-Demand bevaras
-**Kontext:** källdisken kan sakna plats för full lokal spegling; masshydrering är dyr och riskabel.
-**Beslut:** materialisera aldrig platshållare för att "lösa" flytten; utöka aldrig mängden lokalt speglade filer; verifiering är status-medveten.
-**Konsekvens:** flytten fungerar även när molnet är mycket större än måldisken.
+## ADR-002 — Files-On-Demand is preserved
+**Context:** the source disk may lack space for a full local mirror; mass hydration is expensive and risky.
+**Decision:** never materialize placeholders to "solve" the move; never expand the set of locally mirrored files; verification is status-aware.
+**Consequence:** the move works even when the cloud is much larger than the target disk.
 
-## ADR-003 — Dry-run default + tidsgrindad radering
-**Kontext:** riskhöjd irreversibel operation (B12.2, A3).
-**Beslut:** alla destruktiva steg kräver `-Execute`; källan behålls `min_stable_days` dygn och flyttas (inte raderas) till backup före tömning.
-**Konsekvens:** rollback-baslinje bevaras tills synken bevisats stabil.
+## ADR-003 — Dry-run default + time-gated deletion
+**Context:** risk-elevated irreversible operation (B12.2, A3).
+**Decision:** all destructive steps require `-Execute`; the source is retained `min_stable_days` days and moved (not deleted) to backup before purging.
+**Consequence:** the rollback baseline is preserved until the sync is proven stable.
 
-## ADR-004 — Svenska docs, engelsk kod
-**Kontext:** B9 kräver engelska identifierare; ekosystemets dokumentation är svensk.
-**Beslut:** prosa/docs på svenska (native UTF-8), all kod/identifierare/schema på engelska, `.ps1` ASCII-only.
-**Konsekvens:** publicerbart utan efter-översättning; inga encoding-fällor i kod.
+## ADR-004 — Swedish docs, English code [SUPERSEDED by ADR-008]
+Superseded by ADR-008: documentation is now written in English.
+**Context:** B9 requires English identifiers; the ecosystem's documentation is Swedish.
+**Decision:** prose/docs in Swedish (native UTF-8), all code/identifiers/schema in English, `.ps1` ASCII-only.
+**Consequence:** publishable without post-translation; no encoding traps in code.
 
-## ADR-005 — `_sources/` osrubbat men aldrig publicerat
-**Kontext:** originalunderlagen bär sökvägar/IDs; den publika ytan måste vara PII-fri.
-**Beslut:** `_sources/` är `.gitignore`:ad; destilleringen i `01_docs/` är den publicerbara ytan.
-**Konsekvens:** kunskapen bevaras lokalt, PII läcker aldrig till repo.
+## ADR-005 — `_sources/` untouched but never published
+**Context:** the original source materials carry paths/IDs; the public surface must be PII-free.
+**Decision:** `_sources/` is `.gitignore`d; the distillation in `01_docs/` is the publishable surface.
+**Consequence:** the knowledge is preserved locally, PII never leaks to the repo.
 
-## ADR-006 — Git med separat git-dir utanför synkytan
-**Kontext:** `.git` i en synkad molnmapp kolliderar med synkklientens skanning → korrupt objektdatabas (bevisat i ett tidigare projekt).
-**Beslut:** initiera Git med separat git-dir utanför synkytan, `gc.auto 0`, first commit med namngivna filer (aldrig `git add .`).
-**Konsekvens:** arbetskopian synkas, Git-objekten inte; ingen historikförlust. Se `Initialize-Repo.ps1`.
+## ADR-006 — Git with a separate git-dir outside the sync surface
+**Context:** a `.git` inside a synced cloud folder collides with the sync client's scanning → a corrupt object database (proven in an earlier project).
+**Decision:** initialize Git with a separate git-dir outside the sync surface, `gc.auto 0`, first commit with named files (never `git add .`).
+**Consequence:** the working copy syncs, the Git objects do not; no history loss. See `Initialize-Repo.ps1`.
 
-## ADR-007 - Git-dir i projektmappen (frångår ADR-006) + namngiven upphovsperson
-**Kontext:** projektägaren vill ha ett självbärande/portabelt repo med .git i projektmappen, och egen publicerings-identitet.
-**Beslut:** flytta .git tillbaka in i den molnsynkade projektmappen; behåll gc.auto 0 som mildring. Upphovsperson: David Hagdahl (medvetet inkluderad egen PII i LICENSE/README per uttryckligt beslut).
-**Konsekvens:** självbärande/portabelt repo, men bär åter risken för synkklient-korruption av .git (ADR-006:s skäl). Mildring: gc.auto 0 + pausa synk vid stora git-operationer.
+## ADR-007 - Git-dir in the project folder (departs from ADR-006) + named author
+**Context:** the project owner wants a self-contained/portable repo with .git in the project folder, and their own publishing identity.
+**Decision:** move .git back into the cloud-synced project folder; keep gc.auto 0 as mitigation. Author: David Hagdahl (deliberately included own PII in LICENSE/README per explicit decision).
+**Consequence:** a self-contained/portable repo, but again carries the risk of sync-client corruption of .git (ADR-006's reasoning). Mitigation: gc.auto 0 + pause sync during large git operations.
+
+## ADR-008 - English documentation (supersedes ADR-004)
+**Context:** the repo is public; a single English surface across docs and code widens reach and removes the SV/EN split. B9 already requires English for code/identifiers/schema and permits user-facing docs in another language, so this is a deliberate reach choice, not a compliance fix.
+**Decision:** all documentation is written in English; code, identifiers and schema remain English (unchanged). The Swedish baseline is preserved at tag v0.1.0.
+**Consequence:** single-language public surface; ADR-004's Swedish-docs decision no longer applies. .md stays UTF-8 without BOM; .ps1 stays ASCII-only.

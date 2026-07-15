@@ -1,35 +1,35 @@
-# DATA-FORMATS — verktygens filscheman
+# DATA-FORMATS — the tools' file schemas
 
-Alla utdata är UTF-8, tab-separerade (TSV med `.csv`-namn) eller JSON. Skrivs till `work_dir`.
+All output is UTF-8, tab-separated (TSV with `.csv` names) or JSON. Written to `work_dir`.
 
-## inventory_<ts>.csv  (fas 0)
-Tab-separerad. En rad per fil i källan.
+## inventory_<ts>.csv  (phase 0)
+Tab-separated. One row per file in the source.
 
-| Kolumn | Typ | Exempel | Not |
+| Column | Type | Example | Note |
 |---|---|---|---|
-| RelPath | sträng | `Docs\a.txt` | relativ mot source_root |
-| SizeBytes | heltal | `1024` | 0 för online-only platshållare |
+| RelPath | string | `Docs\a.txt` | relative to source_root |
+| SizeBytes | integer | `1024` | 0 for online-only placeholders |
 | LastWriteUtc | ISO-8601 | `2026-07-01T14:00:00` | UTC |
-| AttrHex | hex | `0x420` | råa filattribut |
-| Status | enum | `online-only` \| `local-available` \| `always-keep` | attribut-klassning |
+| AttrHex | hex | `0x420` | raw file attributes |
+| Status | enum | `online-only` \| `local-available` \| `always-keep` | attribute classification |
 
-## pinlist_<ts>.txt  (fas 0)
-En relativ sökväg per rad — alla filer som INTE är online-only (dvs finns lokalt).
+## pinlist_<ts>.txt  (phase 0)
+One relative path per row — all files that are NOT online-only (i.e. present locally).
 
-## md5_<ts>.csv  (fas 1)
-Tab-separerad. En rad per lokal fil.
+## md5_<ts>.csv  (phase 1)
+Tab-separated. One row per local file.
 
-| Kolumn | Typ | Not |
+| Column | Type | Note |
 |---|---|---|
-| RelPath | sträng | relativ mot source_root |
-| MD5 | hex(32) | eller `ERROR` vid läsfel |
-| SizeBytes | heltal | |
+| RelPath | string | relative to source_root |
+| MD5 | hex(32) | or `ERROR` on read failure |
+| SizeBytes | integer | |
 
-## structure_report_<ts>.txt  (fas 5)
-Klartext. Sektioner: filer i fas-0-facit som saknas på målet, plus en sammanfattningsrad (present/missing/extra). "Missing" förväntas domineras av icke-synkat skräp (Thumbs.db, `~$`-temp, desktop.ini, `.tmp`).
+## structure_report_<ts>.txt  (phase 5)
+Plain text. Sections: files in the phase-0 ground truth that are missing on the target, plus a summary line (present/missing/extra). "Missing" is expected to be dominated by non-synced junk (Thumbs.db, `~$` temp files, desktop.ini, `.tmp`).
 
-## *_done.json  (klar-markörer, alla faser)
-`{ finishedUtc, <fas-specifika räknare> }` — skrivs sist, atomiskt. Närvaro = fasen är klar och verifierad.
+## *_done.json  (completion markers, all phases)
+`{ finishedUtc, <phase-specific counters> }` — written last, atomically. Presence = the phase is complete and verified.
 
-## state_report.json  (diagnos)
-`{ accounts: [ { name, files, conflicts, fileStatus_dist, throttle_events, recent_error_codes } ] }` — från synkmotorns SQLite-tillstånd (read-only snapshot).
+## state_report.json  (diagnostics)
+`{ accounts: [ { name, files, conflicts, fileStatus_dist, throttle_events, recent_error_codes } ] }` — from the sync engine's SQLite state (read-only snapshot).

@@ -1,59 +1,59 @@
 # ARCHITECTURE
 
-## Designmål
-Bevisbart säker flytt av en molnsynkad datamapp mellan diskar, med minsta möjliga risk och full spårbarhet. Verktygen är fristående PowerShell/Python-script som körs i faser; ingen daemon, inget molnberoende utöver providerns kvot-/metadata-endpoint.
+## Design goal
+A provably safe move of a cloud-synced data folder between disks, with the least possible risk and full traceability. The tools are standalone PowerShell/Python scripts run in phases; no daemon, no cloud dependency beyond the provider's quota/metadata endpoint.
 
-## Dataflöde
+## Data flow
 
 ```
-config.local ──► Invoke-CloudSyncMove.ps1 (orkestrerare, dry-run default)
-                   │
-   fas 0  ─────────┼─► Invoke-Inventory.ps1      ─► inventory_<ts>.csv (+ pinlist)   [ren läsning]
-   fas 1  ─────────┼─► Invoke-Md5Baseline.ps1    ─► md5_<ts>.csv                     [.NET MD5]
-   fas 2  ─────────┼─► Test-MovePreflight.ps1    ─► preflight_<ts>.json              [grindar]
-   (klientens flytt utförs manuellt/guidat — Metod A)
-   fas 5  ─────────┼─► Compare-MoveStructure.ps1 ─► structure_report_<ts>.txt
-   fas 6  ─────────┼─► Invoke-HydrationVerify.ps1 ─► verify_<ts>.json                [hydrerings-medveten]
-   diagnos ────────┴─► Read-OneDriveSyncState.ps1 ─► read_sync_state.py ─► state_report.json
+config.local ──► Invoke-CloudSyncMove.ps1  (orchestrator, dry-run default)
+     │
+     ├─ phase 0     Invoke-Inventory.ps1      ─► inventory_<ts>.csv (+ pinlist)   [read-only]
+     ├─ phase 1     Invoke-Md5Baseline.ps1    ─► md5_<ts>.csv                     [.NET MD5]
+     ├─ phase 2     Test-MovePreflight.ps1    ─► preflight_<ts>.json              [gates]
+     │  (the client's move is performed manually/guided — Method A)
+     ├─ phase 5     Compare-MoveStructure.ps1 ─► structure_report_<ts>.txt
+     ├─ phase 6     Invoke-HydrationVerify.ps1 ─► verify_<ts>.json                [hydration-aware]
+     └─ diagnostics Read-OneDriveSyncState.ps1 ─► read_sync_state.py ─► state_report.json
 ```
 
-Alla artefakter skrivs till `work_dir` (lokal, snabb disk — **inte** den synkade mappen).
+All artifacts are written to `work_dir` (local, fast disk — **not** the synced folder).
 
-## Faskarta ↔ script
+## Phase map ↔ script
 
-| Fas | Script | Skriver | Läser innehåll? |
+| Phase | Script | Writes | Reads content? |
 |---|---|---|---|
-| 0 inventering | `Invoke-Inventory.ps1` | inventory-CSV + pinlist | Nej (endast attribut) |
-| 1 baslinje | `Invoke-Md5Baseline.ps1` | md5-CSV | Ja (endast lokala filer) |
-| 2 preflight | `Test-MovePreflight.ps1` | preflight-JSON | Nej |
-| 5 struktur | `Compare-MoveStructure.ps1` | strukturrapport | Nej |
-| 6 efterverify | `Invoke-HydrationVerify.ps1` | verify-JSON | Ja (efter hydrering) |
-| diagnos | `Read-OneDriveSyncState.ps1` + `read_sync_state.py` | state-JSON | Nej (SQLite-snapshot) |
-| nödstopp | `stop_all_jobs.ps1` / `start_all_jobs.ps1` | — | — |
+| 0 inventory | `Invoke-Inventory.ps1` | inventory CSV + pinlist | No (attributes only) |
+| 1 baseline | `Invoke-Md5Baseline.ps1` | md5 CSV | Yes (local files only) |
+| 2 preflight | `Test-MovePreflight.ps1` | preflight JSON | No |
+| 5 structure | `Compare-MoveStructure.ps1` | structure report | No |
+| 6 post-verify | `Invoke-HydrationVerify.ps1` | verify JSON | Yes (after hydration) |
+| diagnostics | `Read-OneDriveSyncState.ps1` + `read_sync_state.py` | state JSON | No (SQLite snapshot) |
+| emergency stop | `stop_all_jobs.ps1` / `start_all_jobs.ps1` | — | — |
 
-## Säkerhetsmodell
-- **Dry-run default** (A1): destruktiva steg kräver `-Execute`.
-- **Radering tidsgrindad** (A3): källan behålls `min_stable_days` dygn.
-- **Ren läsning i fas 0** (B11 dataminimering): inventeringen rör aldrig filinnehåll.
-- **Ingen molndelning** (A2): endast providerns egen kvot-/metadata-endpoint anropas; inget filinnehåll skickas.
-- **Idempotens** (A6): varje script kan köras om; atomic write (temp + `Move-Item -Force`); klar-markörer (`*_done.json`).
+## Security model
+- **Dry-run default** (A1): destructive steps require `-Execute`.
+- **Time-gated deletion** (A3): the source is kept for `min_stable_days` days.
+- **Read-only pass in phase 0** (B11 data minimization): the inventory never touches file content.
+- **No cloud sharing** (A2): only the provider's own quota/metadata endpoint is called; no file content is sent.
+- **Idempotency** (A6): every script can be re-run; atomic write (temp + `Move-Item -Force`); completion markers (`*_done.json`).
 
-## Exekverings- vs målmiljö (B14)
-Långkörande filoperationer startas frånkopplat (background job / separat session) så att en kommandobrygga-timeout inte avbryter mitt i. Läs/skriv mot en synkad yta sker via host-processer (PowerShell), inte via en sandbox som inte når synkklientens skriv-API.
+## Execution vs target environment (B14)
+Long-running file operations are started detached (background job / separate session) so that a command-bridge timeout does not interrupt mid-run. Reads/writes against a synced surface go through host processes (PowerShell), not through a sandbox that cannot reach the sync client's write API.
 
-## Encoding-disciplin (B8)
-- `.ps1` — **ASCII-only** (PowerShell 5.1 läser UTF-8-utan-BOM som CP1252). Verifiera med `Select-String '[^\x00-\x7F]'`.
-- `.py` — UTF-8 utan BOM; `sys.stdout.reconfigure(encoding="utf-8")` överst.
-- `.md` — UTF-8 utan BOM, native å/ä/ö.
-- Config läses som INI (ingen BOM-känslig parser).
+## Encoding discipline (B8)
+- `.ps1` — **ASCII-only** (PowerShell 5.1 reads UTF-8-without-BOM as CP1252). Verify with `Select-String '[^\x00-\x7F]'`.
+- `.py` — UTF-8 without BOM; `sys.stdout.reconfigure(encoding="utf-8")` at the top.
+- `.md` — UTF-8 without BOM (docs are English per ADR-008; keep them ASCII-clean where practical).
+- Config is read as INI (no BOM-sensitive parser).
 
-## Loggdiagnos (komplement till state-DB)
+## Log diagnostics (complement to the state DB)
 
-Utöver synkmotorns *tillstånd* (`read_sync_state.py`) finns två loggparsrar för *händelseströmmen*:
+Beyond the sync engine's *state* (`read_sync_state.py`) there are two log parsers for the *event stream*:
 
-| Script | Läser | Roll |
+| Script | Reads | Role |
 |---|---|---|
-| `Read-OneDriveLogs.ps1` + `parse_odl.py` | OneDrives ODL-loggar (`.aodl` klartext / `.odlgz` gzip) | räknar throttle-/felsignaler + scenarionamn; visar *varför* felräknaren är hög just nu |
-| `Read-GoogleDriveLogs.ps1` | Google Drives `drive_fs.txt` (klartext) | tidig varning för inode-fällan: `MIRROR_GDOC_DELETED`, `changed inode` |
+| `Read-OneDriveLogs.ps1` + `parse_odl.py` | OneDrive's ODL logs (`.aodl` plain text / `.odlgz` gzip) | counts throttle/error signals + scenario names; shows *why* the error counter is high right now |
+| `Read-GoogleDriveLogs.ps1` | Google Drive's `drive_fs.txt` (plain text) | early warning for the inode trap: `MIRROR_GDOC_DELETED`, `changed inode` |
 
-Regel: state-DB:n är facit för tillståndet, loggen förklarar den pågående aktiviteten. Kör state-läsaren först, loggparsern för detaljer.
+Rule: the state DB is the ground truth for the state, the log explains the ongoing activity. Run the state reader first, the log parser for detail.

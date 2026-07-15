@@ -1,35 +1,35 @@
 # LESSONS_LEARNED
 
-Append-only. Nyast överst. Destillerat och avidentifierat ur två skarpa flyttar (Google Drive-spegel, OneDrive Personal). Osrubbade original i `_sources/`.
+Append-only. Newest on top. Distilled and de-identified from two real migrations (Google Drive mirror, OneDrive Personal). Unscrubbed originals in `_sources/`.
 
-## 2026-07 — OneDrive Personal C: -> E: (Metod A)
+## 2026-07 — OneDrive Personal C: -> E: (Method A)
 
-- **Synkfelräknaren ljuger under masshydrering.** "Över 740 synkfel" visade sig vara transient throttling (HTTP 429/403 på hydrering), inte dataproblem. Synkmotorns tillstånd var rent (0 konflikter, 0 fel-status). *Lärdom:* verifiera mot motorns SQLite-tillstånd, aldrig mot UI-räknaren. (A4)
-- **Läs klientens state-DB read-only.** DB:erna är WAL och öppna av klienten. Snapshot-kopia (db+wal+shm) och läs kopian, eller `immutable=1&mode=ro`. Aldrig live read-write. (A7)
-- **`Get-FileHash` finns inte i en spawnad `powershell.exe` 5.1** (ingen modul-autoload). Bekräftar B14. Använd `[System.Security.Cryptography.MD5]`. 
-- **`.NET SetAttributes` kan inte sätta molnets PINNED-bit.** Använd `attrib +P`.
-- **MD5-verify racar hydrering.** Verifiera först när stickprov = 0 online-only.
-- **Strukturdiffens "missing" är nästan bara skräp** (Thumbs.db, `~$`-temp, desktop.ini, `.tmp`) — klassa dem, förväxla inte med dataförlust.
-- **Moln-facit via provider-API (kvot-diff = 0) är det starkaste beviset** att flytten inte rörde molnet.
+- **The sync error counter lies during mass hydration.** "Over 740 sync errors" turned out to be transient throttling (HTTP 429/403 on hydration), not a data problem. The sync engine state was clean (0 conflicts, 0 error status). *Lesson:* verify against the engine's SQLite state, never against the UI counter. (A4)
+- **Read the client's state DB read-only.** The DBs are WAL and open by the client. Take a snapshot copy (db+wal+shm) and read the copy, or `immutable=1&mode=ro`. Never live read-write. (A7)
+- **`Get-FileHash` does not exist in a spawned `powershell.exe` 5.1** (no module autoload). Confirms B14. Use `[System.Security.Cryptography.MD5]`.
+- **`.NET SetAttributes` cannot set the cloud's PINNED bit.** Use `attrib +P`.
+- **MD5 verify races hydration.** Verify only when the spot check = 0 online-only.
+- **The structure diff's "missing" is almost entirely junk** (Thumbs.db, `~$` temp, desktop.ini, `.tmp`) — classify them, don't confuse them with data loss.
+- **Cloud ground truth via the provider API (quota diff = 0) is the strongest proof** that the move did not touch the cloud.
 
-## 2026-06 — Google Drive-spegel C: -> E: (inode-fällan)
+## 2026-06 — Google Drive mirror C: -> E: (the inode trap)
 
-- **Junction + synkmotor = katastrof.** Klienten tolkade den junction-flyttade roten som "innehållet raderat" och trashade ~1900 objekt i molnet, plattade sedan ut strukturen. *Lärdom:* flytta ALDRIG en aktiv synkmapp via junction/robocopy; använd klientens egen "byt plats". (kärnprincip)
-- **Håll klienten helt avstängd tills moln och lokalt är konsekventa.** Klienten re-trashar i loop annars.
-- **Återställ molnet parent-first.** Återställer man ett barn vars förälder ligger kvar i papperskorgen hamnar det föräldralöst i roten.
-- **Ta en pristine-backup till en oövervakad plats och rör den aldrig** — den är facit vid återställning.
-- **SMR-disk är fel disk för aktiv synk.** En synkad mapp på en SMR-arkivdisk gav 100 % diskaktivitet och GUI-lagg. Lägg aktiv synk på SSD/CMR; håll SMR för sekventiella arkiv.
-- **Klientens lokala loggar är guld** (`drive_fs.txt`): visar inode-ändring och raderingar.
+- **Junction + sync engine = disaster.** The client interpreted the junction-moved root as "the content was deleted" and trashed ~1900 objects in the cloud, then flattened the structure. *Lesson:* NEVER move an active sync folder via junction/robocopy; use the client's own "change location". (core principle)
+- **Keep the client completely shut down until cloud and local are consistent.** Otherwise the client re-trashes in a loop.
+- **Restore the cloud parent-first.** If you restore a child whose parent is still in the trash, it ends up orphaned in the root.
+- **Take a pristine backup to an unmonitored location and never touch it** — it is the ground truth during restore.
+- **An SMR disk is the wrong disk for active sync.** A synced folder on an SMR archive disk gave 100% disk activity and GUI lag. Put active sync on SSD/CMR; keep SMR for sequential archives.
+- **The client's local logs are gold** (`drive_fs.txt`): they show inode changes and deletions.
 
-## Tvärgående principer
-- Molnet är facit — rör det aldrig under en flytt.
-- Bevara FoD — materialisera aldrig allt.
-- Källan är rollback-baslinjen tills synken bevisats stabil i flera dygn.
-- Långkörande filoperationer startas frånkopplat så en brygg-timeout inte avbryter mitt i.
+## Cross-cutting principles
+- The cloud is the ground truth — never touch it during a move.
+- Preserve FoD — never materialize everything.
+- The source is the rollback baseline until sync has been proven stable for several days.
+- Long-running file operations are started detached so a bridge timeout does not interrupt mid-run.
 
-### Operativa/diagnostik-mönster (2026-07, destillerade)
+### Operational/diagnostic patterns (2026-07, distilled)
 
-- **Frikopplade långjobb + marker-filer, inte strömmad utdata.** Stora enumereringar/hashningar över en synkad yta timar ut i en interaktiv brygga och buffras blockvis när utdata går till fil. Mönster (som toolkit-scripten använder): kör frikopplat, skriv `*_progress.txt` löpande och `*_done.json` sist (atomiskt), och polla marker-filen i stället för att vänta på strömmad output.
-- **Riktad sökning, inte rekursiv enum av hela roten.** En full `EnumerateFiles` över den synkade roten kan vara enorm (miljontals online-only-platshållare) och timeout:a när man bara letar efter en fil eller ett konto. Sök riktat mot kända undermappar.
-- **Fri diskyta som framstegs-/tröskelmått.** Under långsam disk (SMR) är antal-räkning trögt; delta i målets upptagna utrymme är ett robust, billigt framstegs- och tröskelmått (grunden för `Watch-TargetGrowth.ps1`).
-- **State-DB-snapshot är stor - städa.** En snapshot kan vara flera GB (DB + stor WAL). Skriv till lokal disk och radera efteråt, annars äter diagnosen upp den disk du försöker frigöra.
+- **Detached long jobs + marker files, not streamed output.** Large enumerations/hashings over a synced surface time out in an interactive bridge and are buffered in blocks when output goes to a file. Pattern (used by the toolkit scripts): run detached, write `*_progress.txt` continuously and `*_done.json` last (atomically), and poll the marker file instead of waiting for streamed output.
+- **Targeted search, not a recursive enum of the whole root.** A full `EnumerateFiles` over the synced root can be enormous (millions of online-only placeholders) and time out when you are only looking for one file or one account. Search targeted against known subfolders.
+- **Free disk space as a progress/threshold measure.** On a slow disk (SMR), counting is sluggish; the delta in the target's used space is a robust, cheap progress and threshold measure (the basis of `Watch-TargetGrowth.ps1`).
+- **The state DB snapshot is large — clean up.** A snapshot can be several GB (DB + large WAL). Write to local disk and delete afterward, otherwise the diagnostics eat up the very disk you are trying to free.

@@ -1,41 +1,46 @@
 # CHANGELOG
 
-> Version 0.1.0
+> Version 0.2.0
 
-Format: datum - ändring - rollback.
+Format: date - change - rollback.
 
-## 2026-07-01 - Initialt projekt
-Skapade `cloud-sync-mover`: playbook, docs, PowerShell/Python-verktygslåda och tester, destillerat ur en Google Drive- och en OneDrive-flytt. Avidentifierat (endast molntjänster + klientversioner är specifika).
+## 2026-07-01 - Initial project
+Created `cloud-sync-mover`: playbook, docs, PowerShell/Python toolkit and tests, distilled from a Google Drive and a OneDrive move. De-identified (only cloud services + client versions are specific).
 
-- **Nya filer:** `README.md`, `LICENSE`, `.gitignore`, `config.example`, `00_admin/*`, `01_docs/*`, `03_src/ps/*`, `03_src/py/read_sync_state.py`, `04_tests/validation/Test-Toolkit.ps1`.
-- **Struktur:** bantad från full B9 (se `00_admin/DECISIONS.md` ADR-000).
-- **Verifiering:** smoke-tester gröna; alla `.ps1` ASCII-only + parse-rena; PII-scan ren på spårad yta.
-- **Rollback:** ta bort projektmappen; inga externa system berördes, ingen data flyttades. `_sources/` är `.gitignore`:ad och committas aldrig.
+- **New files:** `README.md`, `LICENSE`, `.gitignore`, `config.example`, `00_admin/*`, `01_docs/*`, `03_src/ps/*`, `03_src/py/read_sync_state.py`, `04_tests/validation/Test-Toolkit.ps1`.
+- **Structure:** trimmed down from full B9 (see `00_admin/DECISIONS.md` ADR-000).
+- **Verification:** smoke tests green; all `.ps1` ASCII-only + parse-clean; PII scan clean on tracked surface.
+- **Rollback:** delete the project folder; no external systems were touched, no data was moved. `_sources/` is `.gitignore`d and is never committed.
 
-## 2026-07-01 - Loggparsers tillagda
-La till diagnos-loggparsrar: `03_src/py/parse_odl.py` + `03_src/ps/Read-OneDriveLogs.ps1` (OneDrive ODL), och `03_src/ps/Read-GoogleDriveLogs.ps1` (Google Drive inode-/raderingsmarkörer). Docs uppdaterade (ARCHITECTURE, USER_GUIDE, PLAYBOOK, PROVIDER-NOTES).
-- Rollback: ta bort de tre filerna + append-sektionerna. Ingen data berördes.
-- Verifiering: smoke-tester (ASCII + parse) gröna; PII-scan ren.
+## 2026-07-01 - Log parsers added
+Added diagnostic log parsers: `03_src/py/parse_odl.py` + `03_src/ps/Read-OneDriveLogs.ps1` (OneDrive ODL), and `03_src/ps/Read-GoogleDriveLogs.ps1` (Google Drive inode/deletion markers). Docs updated (ARCHITECTURE, USER_GUIDE, PLAYBOOK, PROVIDER-NOTES).
+- Rollback: delete the three files + the appended sections. No data was touched.
+- Verification: smoke tests (ASCII + parse) green; PII scan clean.
 
-## 2026-07-01 - Lessons learned + provider-notes destillerade
-Destillerade sessionsdiagnostiken till `00_admin/LESSONS_LEARNED.md` och `01_docs/PROVIDER-NOTES.md` (avidentifierat). Efterregistrerad post för commit `b51138a`.
-- Rollback: återställ de två filerna till föregående version. Ingen data berördes.
-- Verifiering: PII-scan ren på spårad yta.
+## 2026-07-01 - Lessons learned + provider notes distilled
+Distilled the session diagnostics into `00_admin/LESSONS_LEARNED.md` and `01_docs/PROVIDER-NOTES.md` (de-identified). Back-registered entry for commit `b51138a`.
+- Rollback: restore the two files to the previous version. No data was touched.
+- Verification: PII scan clean on tracked surface.
 
-## 2026-07-01 - Publiceringsberedskap
-Gjorde repot självbärande (`01_docs/PRINCIPLES.md` förklarar de citerade koderna så ingen extern standard krävs) och la till DISCLAIMER.md + varningsbanner (README/USER_GUIDE). Bekräftat: noll referenser till lokal-only cowork-configurations.
-- Rollback: ta bort PRINCIPLES.md/DISCLAIMER.md + återställ README/USER_GUIDE-tilläggen.
+## 2026-07-01 - Publication readiness
+Made the repo self-contained (`01_docs/PRINCIPLES.md` explains the cited codes so no external standard is required) and added DISCLAIMER.md + warning banner (README/USER_GUIDE). Confirmed: zero references to local-only cowork-configurations.
+- Rollback: delete PRINCIPLES.md/DISCLAIMER.md + revert the README/USER_GUIDE additions.
 
-## 2026-07-01 - Publicerings-identitet + git-dir-val
-- Upphovsperson/publicerare: David Hagdahl (LICENSE, README) - medvetet inkluderad egen PII per beslut.
-- .git flyttad in i projektmappen (vanlig katalog) per beslut; gc.auto 0 behållet (frångår ADR-006, se ADR-007).
+## 2026-07-01 - Publication identity + git dir choice
+- Author/publisher: David Hagdahl (LICENSE, README) - own PII deliberately included per decision.
+- .git moved into the project folder (normal directory) per decision; gc.auto 0 retained (departs from ADR-006, see ADR-007).
 
-## 2026-07-01 - config.example täcker Google Drive
-Utökade `config.example` med Google Drive-stöd: mount-/virtuell-disk-sökvägar och `[google_drive] mode = streaming|mirror`. Efterregistrerad post för commit `cbcb3f7`.
-- Rollback: återställ `config.example` till föregående version. Ingen data berördes.
-- Verifiering: config läses som INI; inga hemligheter tillagda.
+## 2026-07-01 - config.example covers Google Drive
+Extended `config.example` with Google Drive support: mount/virtual-disk paths and `[google_drive] mode = streaming|mirror`. Back-registered entry for commit `cbcb3f7`.
+- Rollback: restore `config.example` to the previous version. No data was touched.
+- Verification: config reads as INI; no secrets added.
 
-## 2026-07-15 - CHANGELOG-avstämning + baslinje v0.1.0
-Stämde av CHANGELOG mot git-historiken: lade till efterregistrerade poster för commits `b51138a` och `cbcb3f7` (B2), rättade encoding-artefakter (raderingsmarkörer, berördes, gröna, `01_docs/PRINCIPLES.md`) och la till versionsmarkör `> Version 0.1.0`. Taggas som `v0.1.0` — svensk baslinje före engelsk översättning.
-- Rollback: `git revert` denna commit; ta bort taggen `v0.1.0` (`git tag -d v0.1.0`).
-- Verifiering: varje commit i historiken har nu en CHANGELOG-post (1:1); `.md` är UTF-8 utan BOM.
+## 2026-07-15 - CHANGELOG reconciliation + baseline v0.1.0
+Reconciled the CHANGELOG against the git history: added back-registered entries for commits `b51138a` and `cbcb3f7` (B2), fixed encoding artifacts (deletion markers, touched, green, `01_docs/PRINCIPLES.md`) and added version marker `> Version 0.1.0`. Tagged as `v0.1.0` — Swedish baseline before English translation.
+- Rollback: `git revert` this commit; delete the tag `v0.1.0` (`git tag -d v0.1.0`).
+- Verification: every commit in the history now has a CHANGELOG entry (1:1); `.md` is UTF-8 without BOM.
+
+## 2026-07-15 - English translation of all documentation
+Translated all Markdown docs (README, 00_admin/*, 01_docs/*, DISCLAIMER, CHANGELOG) from Swedish to English. Code, identifiers and schema were already English. ADR-004 (Swedish docs) superseded by ADR-008 (English docs); language references in PRINCIPLES/README/ARCHITECTURE/HANDOVER updated. Version bumped to 0.2.0.
+- Rollback: git revert; the Swedish baseline remains at tag v0.1.0.
+- Verification: per-file invariant check (commands, paths, hex, thresholds, enums, log markers preserved) + adversarial semantic review vs the Swedish source; .md is UTF-8 without BOM.

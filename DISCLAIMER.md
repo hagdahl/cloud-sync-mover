@@ -1,19 +1,4 @@
-# Ansvarsfriskrivning / Disclaimer
-
-## Svenska
-
-Programvaran och dokumentationen i detta projekt tillhandahålls "i befintligt skick" ("AS IS"), utan några som helst garantier. Verktygen utför riskfyllda operationer på molnsynkade filer (flytt, radering, ompekning) och kan - vid felaktig användning, felkonfiguration, mjukvarufel eller oförutsedda omständigheter - leda till förlust av data.
-
-Genom att använda detta projekt godkänner du att:
-
-- Du använder det **helt och hållet på egen risk**.
-- Skaparen, upphovspersonerna och bidragsgivarna tar **inget ansvar** för någon form av skada, inklusive men inte begränsat till: skada på hårdvara; skada på eller instabilitet i mjukvara eller operativsystem; förlust eller korruption av data; förlorad arbetstid; driftavbrott; eller andra direkta, indirekta, tillfälliga eller följdskador.
-- Du ansvarar själv för att ha fungerande, verifierade säkerhetskopior innan du kör något, för att förstå vad varje steg gör, och för att köra i dry-run/testläge först.
-- Ingenting i detta projekt utgör juridisk, teknisk eller professionell rådgivning.
-
-Om du inte accepterar dessa villkor ska du inte använda projektet.
-
-## English
+# Disclaimer
 
 This software and documentation are provided "AS IS", without warranty of any kind. The tools perform risky operations on cloud-synced files (moving, deleting, re-pointing) and may - if misused, misconfigured, or affected by software defects or unforeseen circumstances - result in loss of data.
 

@@ -1,63 +1,63 @@
 # cloud-sync-mover
 
-> **Varning / ansvarsfriskrivning:** detta utför riskfyllda filoperationer på molnsynkade data. Använd helt på **egen risk** - skaparen tar inget ansvar för skada på hårdvara, mjukvara eller dataförlust. Kör dry-run först och ha en verifierad backup. Se [DISCLAIMER.md](DISCLAIMER.md).
+> **Warning / disclaimer:** this performs risky file operations on cloud-synced data. Use entirely at **your own risk** — the author accepts no responsibility for damage to hardware, software, or data loss. Run dry-run first and keep a verified backup. See [DISCLAIMER.md](DISCLAIMER.md).
 
-Principer, logik och en körbar verktygslåda för att **flytta den lokala datamappen för en molnsynkad tjänst** (OneDrive, Google Drive) från en disk till en annan på Windows — utan att trigga molnradering, utan att massmaterialisera platshållare, och med bevisbar verifiering att inget gått förlorat.
+Principles, logic, and a runnable toolkit for **moving the local data folder of a cloud-synced service** (OneDrive, Google Drive) from one disk to another on Windows — without triggering cloud deletion, without mass-materializing placeholders, and with provable verification that nothing was lost.
 
-Projektet är destillerat ur två skarpa flyttar (Google Drive och OneDrive Personal) och följer `cowork-projektinstruktioner` (konventionerna sammanfattas i `01_docs/PRINCIPLES.md` så repot är självbärande). Det är avidentifierat: inga personer, användare, datorer eller system nämns. Det enda som är specifikt är **vilka molntjänster** som stöds och **vilka klient-/versionsnummer** det är testat mot.
+The project is distilled from two real migrations (Google Drive and OneDrive Personal) and follows `cowork-project-instructions` (the conventions are summarized in `01_docs/PRINCIPLES.md` so the repo is self-contained). It is de-identified: no people, users, computers, or systems are named. The only things that are specific are **which cloud services** are supported and **which client/version numbers** it was tested against.
 
-## Vad det är / inte är
+## What it is / is not
 
-- **Är:** en playbook (beslutsträd, faser, felmekanismer, checklists) + PowerShell/Python-verktyg som utför inventering, MD5-baslinje, preflight, strukturverifiering, hydrerings-medveten efterverifiering och läsning av synkmotorns tillstånd.
-- **Är inte:** en one-click-migrator. Varje destruktivt steg är opt-in, dry-run är default, och radering av källan är tidsgrindad. Människa-i-loopen (A1) gäller.
+- **Is:** a playbook (decision tree, phases, failure mechanisms, checklists) + PowerShell/Python tools that perform inventory, MD5 baseline, preflight, structure verification, hydration-aware post-verification, and reading of the sync engine state.
+- **Is not:** a one-click migrator. Every destructive step is opt-in, dry-run is the default, and deletion of the source is time-gated. Human-in-the-loop (A1) applies.
 
-## Dataklassificering (A2)
+## Data classification (A2)
 
-| Datakategori | Var | Känslighet | Publicerbar |
+| Data category | Location | Sensitivity | Publishable |
 |---|---|---|---|
-| Kod, playbook, docs (detta repo) | repo-rot | Ingen PU — generisk kunskap | Ja (nivå 2/3) |
-| `_sources/` (osrubbade originalunderlag) | `_sources/` | Kan bära sökvägar/IDs | **Nej** — `.gitignore`:ad, publiceras aldrig |
-| Verktygens utdata (inventory-CSV, MD5-CSV, state-snapshot) | `work_dir` (lokal disk) | Innehåller personliga sökvägar | **Nej** — genereras lokalt, `.gitignore`:ad |
-| Config med faktiska sökvägar | `config.local` | Miljöspecifik | **Nej** — `.gitignore`:ad; endast `config.example` checkas in |
+| Code, playbook, docs (this repo) | repo root | None — generic knowledge | Yes (level 2/3) |
+| `_sources/` (unscrubbed source material) | `_sources/` | May carry paths/IDs | **No** — `.gitignore`d, never published |
+| Tool output (inventory CSV, MD5 CSV, state snapshot) | `work_dir` (local disk) | Contains personal paths | **No** — generated locally, `.gitignore`d |
+| Config with actual paths | `config.local` | Environment-specific | **No** — `.gitignore`d; only `config.example` is checked in |
 
-Verktygen läser **aldrig filinnehåll** i inventeringsfasen (endast attribut), skickar **ingen data till moln-API:er** utöver providerns egen kvot-/metadata-endpoint, och skriver alla artefakter till en lokal `work_dir` utanför den synkade mappen.
+The tools **never read file content** during the inventory phase (attributes only), send **no data to cloud APIs** beyond the provider's own quota/metadata endpoint, and write all artifacts to a local `work_dir` outside the synced folder.
 
-## Stödda tjänster och testade klienter
+## Supported services and tested clients
 
-| Tjänst | Klient | Testad version | Flyttmetod |
+| Service | Client | Tested version | Move method |
 |---|---|---|---|
-| OneDrive Personal | OneDrive för Windows | 26.106–26.108 | Metod A (avlänka → länka om → Välj plats) |
-| OneDrive for Business | OneDrive för Windows | 26.x | Metod A |
-| Google Drive | Google Drive för desktop | 2024–2025-generationen | Byt plats i klientens inställningar (motsvarande Metod A) |
+| OneDrive Personal | OneDrive for Windows | 26.106–26.108 | Method A (unlink → relink → Change location) |
+| OneDrive for Business | OneDrive for Windows | 26.x | Method A |
+| Google Drive | Google Drive for desktop | 2024–2025 generation | Change location in the client's settings (equivalent to Method A) |
 
-Windows 10/11. PowerShell 5.1 + 7. Python 3.11+ (endast för läsning av OneDrives SQLite-tillstånd).
+Windows 10/11. PowerShell 5.1 + 7. Python 3.11+ (only for reading OneDrive's SQLite state).
 
-## Snabbstart
+## Quick start
 
-1. Kopiera `config.example` → `config.local` och fyll i `source_root`, `target_root`, `work_dir`.
-2. Kör orkestreraren i **dry-run** (default) för att se planen utan att ändra något:
+1. Copy `config.example` → `config.local` and fill in `source_root`, `target_root`, `work_dir`.
+2. Run the orchestrator in **dry-run** (default) to see the plan without changing anything:
    `powershell -File 03_src\ps\Invoke-CloudSyncMove.ps1 -Config .\config.local`
-3. Följ faserna i `01_docs/USER_GUIDE.md`. Varje fas har egen verifiering; radering av källan sker först efter tidsgrind + uttryckligt `-Execute`.
+3. Follow the phases in `01_docs/USER_GUIDE.md`. Each phase has its own verification; deletion of the source happens only after the time gate + an explicit `-Execute`.
 
-## Metoden i en mening
+## The method in one sentence
 
-Använd **molnklientens egen flyttfunktion** (aldrig en junction/symlink), bevara Files-On-Demand-platshållare (materialisera inte allt), och bevisa noll dataförlust genom inventering → MD5-baslinje av lokala filer → strukturdiff → hydrerings-medveten efterverifiering → moln-facit via providerns API, innan källan någonsin rörs.
+Use **the cloud client's own move function** (never a junction/symlink), preserve Files-On-Demand placeholders (don't materialize everything), and prove zero data loss through inventory → MD5 baseline of local files → structure diff → hydration-aware post-verification → cloud ground truth via the provider's API, before the source is ever touched.
 
-## Struktur
+## Structure
 
 ```
 00_admin/    HANDOVER, DECISIONS (ADR), GLOSSARY, LESSONS_LEARNED, DEFINITION_OF_DONE
 01_docs/     PLAYBOOK, ARCHITECTURE, USER_GUIDE, PROVIDER-NOTES, VERIFY-PROMPT, DATA-FORMATS
-03_src/ps/   PowerShell-verktygslåda (ASCII-only, dry-run default)
-03_src/py/   read_sync_state.py (läser OneDrives SQLite-tillstånd, read-only)
-04_tests/validation/  smoke-/dry-run-tester
+03_src/ps/   PowerShell toolkit (ASCII-only, dry-run default)
+03_src/py/   read_sync_state.py (reads OneDrive's SQLite state, read-only)
+04_tests/validation/  smoke / dry-run tests
 CHANGELOG.md, README.md, LICENSE, .gitignore, config.example
 ```
 
-## Licens
+## License
 
-MIT — se `LICENSE`.
+MIT — see `LICENSE`.
 
-## Författare / Maintainer
+## Author / Maintainer
 
 David Hagdahl <david@hagdahl.se>
