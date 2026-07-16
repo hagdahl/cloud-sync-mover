@@ -1,7 +1,7 @@
 # Invoke-CloudSyncMove.ps1 - orchestrator. Dry-run/plan by default. Destructive steps are opt-in and gated.
 param(
     [Parameter(Mandatory)][string]$Config,
-    [ValidateSet('plan','inventory','baseline','preflight','structure','verify','diagnose','retire-source')]
+    [ValidateSet('plan','inventory','baseline','preflight','structure','verify','diagnose','probe','retire-source')]
     [string]$Phase = 'plan',
     [switch]$Execute,
     [switch]$SyncConfirmed,
@@ -32,7 +32,8 @@ switch ($Phase) {
         Write-Host "  (then perform the move via the CLIENT - Method A - see 01_docs/PROVIDER-NOTES.md)"
         Write-Host "  -Phase structure   structure diff inventory vs target"
         Write-Host "  -Phase verify      hydration-aware MD5 verify"
-        Write-Host "  -Phase diagnose    read OneDrive sync-state (throttling vs hard errors)"
+        Write-Host "  -Phase diagnose    provider-aware sync health (OneDrive/Google Drive; throttling vs hard errors, #5)"
+        Write-Host "  -Phase probe       round-trip proof the provider is actually syncing (dry-run; -Execute writes one canary, #9)"
         Write-Host ""
         Write-Host "Destructive (gated): -Phase retire-source -Execute  (>= $minDays days stable sync first)"
     }
@@ -41,9 +42,11 @@ switch ($Phase) {
     'preflight' { & (Join-Path $PSScriptRoot 'Test-MovePreflight.ps1')   -Config $Config -SyncConfirmed:$SyncConfirmed }
     'structure' { & (Join-Path $PSScriptRoot 'Compare-MoveStructure.ps1') -Config $Config }
     'verify'    { & (Join-Path $PSScriptRoot 'Invoke-HydrationVerify.ps1') -Config $Config }
-    'diagnose'  { & (Join-Path $PSScriptRoot 'Read-OneDriveSyncState.ps1') -Config $Config }
+    'diagnose'  { & (Join-Path $PSScriptRoot 'Invoke-CsmDiagnose.ps1')     -Config $Config }
+    'probe'     { & (Join-Path $PSScriptRoot 'Invoke-RoundTripProbe.ps1') -Config $Config -Execute:$Execute }
     'retire-source' {
-        $backup = Join-Path ([System.IO.Path]::GetPathRoot($tgt)) ("OldSyncSourceBackup_{0}" -f (New-CsmStamp))
+        # Stable backup path (no timestamp) so a re-run RESUMES into the same folder (#3).
+        $backup = Join-Path ([System.IO.Path]::GetPathRoot($tgt)) "OldSyncSourceBackup"
 
         # Prerequisite gate (#2): decide from phase evidence, not operator memory.
         $gate = Assert-CsmRetireReady -Config $cfg -WorkDir $wd
@@ -85,22 +88,58 @@ switch ($Phase) {
         if (-not $src -or -not $tgt) { Write-Host "REFUSED: source_root/target_root not set."; exit 2 }
         if (-not (Test-Path -LiteralPath $src)) { Write-Host "REFUSED: source_root does not exist: $src"; exit 2 }
 
-        # /XJ /XJD /XJF (#13): never traverse junctions/symlinks during /MOVE, so /MOVE cannot delete through a reparse point.
-        robocopy $src $backup /E /MOVE /XJ /XJD /XJF /R:2 /W:1 | Out-Null
-        $rc = $LASTEXITCODE   # robocopy: 0-7 = success bits, >= 8 = at least one failure (#3)
-        $ok = ($rc -lt 8)
+        # /MOVE deletes each source file only after a successful copy, so a file robocopy fails to
+        # copy is LEFT in the source (#3: unverified files stay in place). /XJ /XJD /XJF (#13): never
+        # traverse junctions during /MOVE.
+        $srcN = $src.TrimEnd('\'); $bkN = $backup.TrimEnd('\')
         $rstamp = New-CsmStamp
+        $rlog   = Join-Path $wd "retire_$rstamp.log"
         $rdone  = Join-Path $wd "retire_${rstamp}_done.json"
-        $meta = New-CsmMeta -Config $cfg -Phase 'retire-source' -Success $ok -Errors ($(if ($ok) { 0 } else { 1 })) -ErrorCategories $(if ($ok) { @() } else { @('robocopy') })
-        $meta['backup']        = $backup
-        $meta['robocopy_exit'] = $rc
-        $meta['gate_passed']   = [bool]$gate.ok
-        $meta['forced']        = [bool]($Force -and -not $gate.ok)
-        Write-CsmAtomic $rdone ($meta | ConvertTo-Json)
-        if ($ok) {
-            Write-Host "Moved old source to $backup (robocopy exit $rc). Delete the backup only much later, after continued stability."
+        $rman   = Join-Path $wd "retire_${rstamp}_manifest.json"
+        robocopy $srcN $bkN /E /MOVE /XJ /XJD /XJF /R:2 /W:1 /NP "/LOG:$rlog" | Out-Null
+        $rc = $LASTEXITCODE
+        $rcInfo = Get-CsmRobocopyExitInfo $rc
+
+        # Post-move verification (#3): whatever remains in the source is unverified/failed; the backup holds the moved set.
+        $noise = Get-CsmNoisePatterns $cfg
+        $leftover = @(Invoke-CsmWalk -Root $srcN -NoisePatterns $noise | ForEach-Object { $_.FullName.Substring($srcN.Length + 1) })
+        $bk = Get-CsmDirFileStats -Root $bkN -NoisePatterns $noise
+        $verified = ($rcInfo.success -and ($leftover.Count -eq 0))
+
+        $manifest = [ordered]@{
+            schema             = 'csm.retire-manifest/1'
+            source             = $srcN
+            backup             = $bkN
+            robocopy_exit      = $rc
+            robocopy_bits      = $rcInfo.bits
+            backup_files       = $bk.files
+            backup_bytes       = $bk.bytes
+            leftover_count     = $leftover.Count
+            leftover_in_source = @($leftover | Select-Object -First 500)
+            verified           = $verified
+            log                = $rlog
+        }
+        Write-CsmAtomic $rman ($manifest | ConvertTo-Json -Depth 5)
+
+        $cats = @(); if (-not $rcInfo.success) { $cats += 'robocopy' }; if ($leftover.Count -gt 0) { $cats += 'unverified-leftover' }
+        $meta = New-CsmMeta -Config $cfg -Phase 'retire-source' -Success $verified -Errors ($leftover.Count + $(if ($rcInfo.success) { 0 } else { 1 })) -ErrorCategories $cats
+        $meta['backup']         = $bkN
+        $meta['robocopy_exit']  = $rc
+        $meta['robocopy_bits']  = $rcInfo.bits
+        $meta['gate_passed']    = [bool]$gate.ok
+        $meta['forced']         = [bool]($Force -and -not $gate.ok)
+        $meta['backup_files']   = $bk.files
+        $meta['leftover_count'] = $leftover.Count
+        $meta['manifest']       = $rman
+        $meta['log']            = $rlog
+        Write-CsmAtomic $rdone ($meta | ConvertTo-Json -Depth 5)
+
+        if ($verified) {
+            Write-Host "RETIRE OK: source moved to $bkN (robocopy exit $rc; $($bk.files) files in backup). Source is empty and verified. Manifest: $rman"
         } else {
-            Write-Host "ROBOCOPY REPORTED FAILURE (exit $rc). Files may remain in the source. Do NOT delete anything; inspect the output and $rdone."
+            Write-Host "RETIRE INCOMPLETE (robocopy exit $rc; $($leftover.Count) file(s) left in source)."
+            Write-Host "  Unverified/failed files were LEFT IN PLACE. Inspect $rlog and $rman."
+            Write-Host "  Re-run -Phase retire-source -Execute to RESUME (copies the remainder into the same backup, skips what already moved)."
             exit 1
         }
     }

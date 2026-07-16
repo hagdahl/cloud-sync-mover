@@ -34,7 +34,7 @@ Written last, atomically. Since v0.3.0 every completion marker carries a common 
 | Field | Type | Note |
 |---|---|---|
 | schema | string | `csm.artifact/1` |
-| phase | string | `inventory` \| `baseline` \| `preflight` \| `structure` \| `verify` \| `retire-source` |
+| phase | string | `inventory` \| `baseline` \| `preflight` \| `structure` \| `verify` \| `diagnose` \| `probe` \| `retire-source` |
 | provider | string | provider.name at run time |
 | mode | string | `streaming` \| `mirror` \| `n/a` (Google Drive mode; #6) |
 | source_root / target_root | string | roots this artifact refers to (identity check for the retire gate) |
@@ -44,7 +44,31 @@ Written last, atomically. Since v0.3.0 every completion marker carries a common 
 | errors | integer | error count |
 | errorCategories | string[] | e.g. `enumeration`, `hash-read`, `missing-files`, `md5-mismatch`, `read-error`, `robocopy` |
 
-Phase-specific counters follow the header (e.g. inventory: `files`, `online_only`, and since v0.4.0 `root_is_junction`, `reparse_skipped`, `noise_skipped`, `access_errors`, `skipped[]`; structure: `missing_real`, `target_reparse_skipped`, `target_access_errors`; verify: `md5_match`, `md5_mismatch`; preflight keeps the legacy `PASS` plus a `reparse` summary). The retire-source gate requires the latest `preflight`, `structure`, and `verify` markers to be present, `success:true`, mutually consistent in identity, recent, and stable (see PLAYBOOK / USER_GUIDE).
+Phase-specific counters follow the header (e.g. inventory: `files`, `online_only`, and since v0.4.0 `root_is_junction`, `reparse_skipped`, `noise_skipped`, `access_errors`, `skipped[]`; structure: `missing_real`, `target_reparse_skipped`, `target_access_errors`; verify: `md5_match`, `md5_mismatch`; preflight keeps the legacy `PASS` plus a `reparse` summary, and since v0.5.0 `mirror_content`, `staging`/`staging_note`, and `diagnose_health`/`diagnose_age_min`/`diagnose_note`). The retire-source gate requires the latest `preflight`, `structure`, and `verify` markers to be present, `success:true`, mutually consistent in identity, recent, and stable (see PLAYBOOK / USER_GUIDE).
+
+## diagnose_<ts>_done.json  (phase diagnose, #5 — v0.5.0)
+Common header (`success` = `health == 'healthy'`) plus a redacted verdict — counts + health only, no account ids / local paths / filenames:
+
+| Field | Type | Note |
+|---|---|---|
+| health | string | `healthy` \| `initializing` \| `warning` \| `blocked` \| `unknown` (fail-closed: "no danger marker" is `unknown`, never `healthy`) |
+| summary | object | provider-specific redacted counts — Google Drive: `liveness`, `wal_max_mb`, `wal_large`, `stale_markers`; OneDrive: `accounts`, `conflicts` |
+
+## probe_<ts>_done.json  (phase probe, #9 — v0.5.0)
+Round-trip proof. `mode` is `dry-run` or `execute`.
+
+| Field | Type | Note |
+|---|---|---|
+| mode | string | `dry-run` (nothing written) \| `execute` (one canary written + cleaned up) |
+| config_ok | bool | probe_dir writable + confirm_command set |
+| outcome | string | (execute) `confirmed` \| `timeout` \| `unknown` |
+| confirm_exit | integer | (execute) last exit code from the operator's confirm_command |
+| elapsed_seconds / canary_removed | int / bool | (execute) round-trip time; whether the single canary was cleaned up |
+
+The canary is a single file `.csm_roundtrip_<token>.txt` whose only content is a random, non-identifying token.
+
+## retire_<ts>_manifest.json  (phase retire-source, #3 — v0.5.0)
+`schema: csm.retire-manifest/1`. Records the resumable `/MOVE`: `source`, `backup`, `robocopy_exit`, `robocopy_bits`, `backup_files`, `backup_bytes`, `leftover_count`, `leftover_in_source[]` (files robocopy could not copy, left in place), `verified` (exit<8 AND zero leftovers), `log`.
 
 ## state_report.json  (diagnostics)
 `{ accounts: [ { name, files, conflicts, fileStatus_dist, throttle_events, recent_error_codes } ] }` — from the sync engine's SQLite state (read-only snapshot).

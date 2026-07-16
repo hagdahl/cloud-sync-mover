@@ -32,7 +32,7 @@ Or phase by phase:
 
 3. **Phase 2 — preflight (safe):**
    `powershell -File 03_src\ps\Test-MovePreflight.ps1 -Config .\config.local -SyncConfirmed`
-   All gates must be green: free space, writability, disk type, provider/mode validity, and **sync-health** — which reports `NEEDS_CONFIRMATION` (a FAIL) until you pass `-SyncConfirmed` or set `[move] assume_up_to_date = true`.
+   All gates must be green: free space, writability, disk type, provider/mode validity, and **sync-health** — which reports `NEEDS_CONFIRMATION` (a FAIL) until you pass `-SyncConfirmed` or set `[move] assume_up_to_date = true`. Preflight also consumes a recent `diagnose` result (step 7): a fresh `initializing` provider reports **NEEDS_WAIT** (wait for the client to finish its startup/scan, don't treat it as a hard failure); a fresh `blocked` fails; Google Drive **mirror** mode is blocked if the local content is incomplete (any online-only file); and a large or inaccessible provider staging dir is flagged (a possibly-stuck upload queue).
 
 4. **The move (manual, Method A):** follow `PROVIDER-NOTES.md` for your client — unlink, relink, Change location → `target_root`. The tool does NOT move it for you (the client must own the move).
 
@@ -44,11 +44,18 @@ Or phase by phase:
    `powershell -File 03_src\ps\Invoke-HydrationVerify.ps1 -Config .\config.local`
    Re-run until the spot check = 0 online-only, then a full MD5 comparison. Can be scheduled every 2h.
 
-7. **Diagnosis on error counters (OneDrive):**
-   `powershell -File 03_src\ps\Read-OneDriveSyncState.ps1 -Config .\config.local`
-   Distinguishes throttling from real errors (see PLAYBOOK 7).
+7. **Diagnose — provider health (safe):**
+   `powershell -File 03_src\ps\Invoke-CloudSyncMove.ps1 -Config .\config.local -Phase diagnose`
+   Provider-aware (OneDrive **and** Google Drive). Emits a single redacted health verdict — `healthy` / `initializing` / `warning` / `blocked` / `unknown` — into `diagnose_<ts>_done.json`. "No known danger marker" is `unknown`, never `healthy`. A large + *growing* Google Drive cache during startup is `initializing` (healthy), not a hang. Throttling is not treated as a danger. Preflight reads this result (see step 3).
 
-8. **Phase 8/9 — gate out the source (destructive, time-gated):**
+8. **Probe — prove the sync actually round-trips (opt-in write):**
+   Dry-run first (writes nothing, just checks readiness):
+   `powershell -File 03_src\ps\Invoke-CloudSyncMove.ps1 -Config .\config.local -Phase probe`
+   "Up to date" is a *display*, not proof that pending local edits leave the machine. Set `[probe] probe_dir` (a dedicated folder inside the synced tree) and `[probe] confirm_command` (a command *you* supply that returns exit 0 once the canary is visible on the other side — provider web or a second device; the token arrives via `%CSM_PROBE_TOKEN%`). Then run with `-Execute` to write ONE non-identifying canary and wait for the round-trip:
+   `powershell -File 03_src\ps\Invoke-CloudSyncMove.ps1 -Config .\config.local -Phase probe -Execute`
+   Only that canary is written, and it is cleaned up afterward. A failed round-trip means local changes are NOT reliably reaching the provider — do not retire the source.
+
+9. **Phase 8/9 — gate out the source (destructive, time-gated):**
    First run it **without** `-Execute` to see the prerequisite gate:
    `powershell -File 03_src\ps\Invoke-CloudSyncMove.ps1 -Config .\config.local -Phase retire-source`
    The gate refuses unless the latest **preflight**, **structure**, and **verify** artifacts are all present, green (`success:true`), refer to the same source/target/provider, are recent (`retire_max_artifact_age_days`), and `min_stable_days` have elapsed since `move_completed_utc`. When the gate reads PASS:

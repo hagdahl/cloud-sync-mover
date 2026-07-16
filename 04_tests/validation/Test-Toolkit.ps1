@@ -136,5 +136,69 @@ Check "walk skips noise dir"   (-not (($rels -join '|').Contains('.tmp.driveuplo
 Check "walk skips junction"    ((@($sk | Where-Object { $_.kind -eq 'reparse' }).Count -ge 1) -and (-not (($rels -join '|').Contains('link'))))
 Remove-Item -Recurse -Force $wr
 
+# 14) robocopy exit-code interpretation (#3)
+Check "robocopy exit 1 success"  ((Get-CsmRobocopyExitInfo 1).success -and -not (Get-CsmRobocopyExitInfo 1).failed)
+Check "robocopy exit 3 success"  ((Get-CsmRobocopyExitInfo 3).success)
+Check "robocopy exit 8 failed"   ((-not (Get-CsmRobocopyExitInfo 8).success) -and (Get-CsmRobocopyExitInfo 8).failed)
+Check "robocopy exit 16 fatal"   (((Get-CsmRobocopyExitInfo 16).bits -contains 'FATAL') -and (Get-CsmRobocopyExitInfo 16).failed)
+
+# 15) liveness verdict classifier (#15) - pure logic
+Check "liveness steady when not starting"   ((Get-CsmLivenessVerdict -InStartupPhase:$false) -eq 'steady')
+Check "liveness initializing on progress"    ((Get-CsmLivenessVerdict -InStartupPhase:$true -WalChanged:$true) -eq 'initializing')
+Check "liveness initializing on cpu"         ((Get-CsmLivenessVerdict -InStartupPhase:$true -CpuDeltaSec 0.2) -eq 'initializing')
+Check "liveness hung when startup no progress" ((Get-CsmLivenessVerdict -InStartupPhase:$true) -eq 'hung')
+
+# 16) diagnose health aggregation (#5) - pure logic; "no danger markers" => unknown, never healthy
+Check "diag null => unknown"       ((Get-CsmDiagnoseHealth $null) -eq 'unknown')
+Check "diag empty => unknown"      ((Get-CsmDiagnoseHealth @{}) -eq 'unknown')
+Check "diag initializing wins"     ((Get-CsmDiagnoseHealth @{ initializing = $true; stalled = $true }) -eq 'initializing')
+Check "diag stalled => blocked"    ((Get-CsmDiagnoseHealth @{ stalled = $true }) -eq 'blocked')
+Check "diag poison => blocked"     ((Get-CsmDiagnoseHealth @{ poisonMarker = $true }) -eq 'blocked')
+Check "diag errors+retry => blocked" ((Get-CsmDiagnoseHealth @{ errorsIncreasing = $true; retryLoop = $true }) -eq 'blocked')
+Check "diag accessDenied => warning" ((Get-CsmDiagnoseHealth @{ accessDenied = $true }) -eq 'warning')
+Check "diag danger marker => warning" ((Get-CsmDiagnoseHealth @{ knownDangerMarker = $true }) -eq 'warning')
+Check "diag verified => healthy"   ((Get-CsmDiagnoseHealth @{ verifiedHealthy = $true }) -eq 'healthy')
+
+# 17) Read-GoogleDriveState emits a redacted object over a synthetic cache (no real client needed)
+$gdc = Join-Path ([System.IO.Path]::GetTempPath()) ("csm_gd_" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force $gdc | Out-Null
+$fs = [System.IO.File]::Create((Join-Path $gdc 'metadata.db-wal')); $fs.SetLength(600MB); $fs.Close()
+'stuck' | Out-File (Join-Path $gdc 'upload.stale.tmp')
+$gcfgp = Join-Path $gdc 'cfg.ini'
+# process_name is pinned to a NON-EXISTENT process so the fixture is deterministic even on a machine
+# where the real Google Drive client is running (otherwise its live CPU would leak in as 'progress').
+Set-Content $gcfgp "[paths]`nwork_dir = $gdc`n[provider]`nname = google-drive`n[google_drive]`ncache_root = $gdc`nwal_warn_mb = 512`nstale_marker_patterns = *stale*`nprocess_name = CsmTestNoSuchProc_$([guid]::NewGuid().ToString('N'))`n[diagnose]`nsample_seconds = 1"
+$gd = & (Join-Path $ps 'Read-GoogleDriveState.ps1') -Config $gcfgp -AsObject
+Check "gdrive reader returns object" ($null -ne $gd -and $gd.provider -eq 'google-drive')
+Check "gdrive reader sees large wal" ($gd.wal_large -eq $true -and $gd.wal_max_mb -ge 512)
+Check "gdrive reader counts stale"   ($gd.stale_markers -ge 1)
+Check "gdrive reader has signals"    ($gd.signals -is [hashtable])
+# large + STALLED WAL (no growth between samples, no client process) is the HUNG case, and must
+# aggregate to 'blocked' - regression guard for the "'hung' unreachable" fail-open (v0.5.0 review).
+Check "gdrive stalled wal => hung"   ($gd.liveness -eq 'hung' -and $gd.signals['stalled'] -eq $true)
+Check "gdrive hung => blocked"       ((Get-CsmDiagnoseHealth $gd.signals) -eq 'blocked')
+Remove-Item -Recurse -Force $gdc
+
+# 18) round-trip probe DRY-RUN writes nothing and reports readiness correctly (#9)
+# Separate work_dirs per case: both dry-runs are sub-second, so a shared work_dir would collide on
+# the second-resolution stamp/finishedUtc and let the "latest artifact" tie-break pick either one.
+$pbase = Join-Path ([System.IO.Path]::GetTempPath()) ("csm_probe_" + [guid]::NewGuid().ToString('N'))
+$pwdN = Join-Path $pbase 'wd_notready'; $pwdR = Join-Path $pbase 'wd_ready'; $pdir = Join-Path $pbase 'synced\probe'
+New-Item -ItemType Directory -Force $pwdN, $pwdR, $pdir | Out-Null
+# not-ready: no confirm_command
+$pcfgN = Join-Path $pbase 'notready.ini'
+Set-Content $pcfgN "[paths]`nwork_dir = $pwdN`n[provider]`nname = google-drive`n[probe]`nprobe_dir = $pdir"
+& (Join-Path $ps 'Invoke-RoundTripProbe.ps1') -Config $pcfgN | Out-Null
+$pd1 = Get-CsmLatestArtifact $pwdN 'probe'
+Check "probe dry-run not-ready" ($null -ne $pd1 -and $pd1.mode -eq 'dry-run' -and $pd1.config_ok -eq $false)
+# ready: probe_dir writable + confirm_command set
+$pcfgR = Join-Path $pbase 'ready.ini'
+Set-Content $pcfgR "[paths]`nwork_dir = $pwdR`n[provider]`nname = google-drive`n[probe]`nprobe_dir = $pdir`nconfirm_command = cmd /c exit 0"
+& (Join-Path $ps 'Invoke-RoundTripProbe.ps1') -Config $pcfgR | Out-Null
+$pd2 = Get-CsmLatestArtifact $pwdR 'probe'
+Check "probe dry-run ready" ($null -ne $pd2 -and $pd2.config_ok -eq $true)
+Check "probe dry-run wrote no canary" (@(Get-ChildItem -LiteralPath $pdir -Filter '.csm_roundtrip_*' -Force -EA SilentlyContinue).Count -eq 0)
+Remove-Item -Recurse -Force $pbase
+
 Write-Host ""
 if ($script:fail -eq 0) { Write-Host "ALL SMOKE TESTS PASSED" } else { Write-Host "$($script:fail) TEST(S) FAILED"; exit 1 }

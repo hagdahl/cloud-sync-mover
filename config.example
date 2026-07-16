@@ -26,6 +26,37 @@ client_version =
 #   streaming = File Stream: online-only placeholders (same RECALL/PINNED attributes as OneDrive FoD)
 #   mirror    = local mirror: every file is present locally, there are no placeholders
 mode = streaming
+# Diagnostics (#5/#8/#15). Read-only paths/markers the diagnose phase samples. Defaults are
+# best-effort; tune against your own client's logs. cache_root defaults to %LOCALAPPDATA%\Google\DriveFS.
+cache_root =
+# WAL size (MB) at/above which the local cache is considered to be doing heavy indexing (a large +
+# GROWING WAL during startup is HEALTHY 'initializing', not blocked - #15).
+wal_warn_mb = 512
+# Stale-upload marker globs (presence = a possibly-stuck upload). ';'-separated, case-insensitive.
+stale_marker_patterns = *stale*;*.pending;*.crdownload
+# Process name whose CPU is sampled as a liveness signal.
+process_name = GoogleDriveFS
+
+[diagnose]
+# Seconds between the two liveness samples the diagnose phase takes (#15). Larger = more reliable
+# progress detection, slower.
+sample_seconds = 5
+# Preflight (#5) only consults a diagnose result newer than this many minutes; older = stale/ignored
+# (transient states like 'initializing' expire).
+max_age_minutes = 30
+
+[probe]
+# Round-trip proof the provider is ACTUALLY syncing (#9). All keys optional; the probe is dry-run
+# unless run with -Execute. probe_dir must be a dedicated folder INSIDE the synced tree (never the
+# live source/target root). The canary written there is a single non-identifying token file.
+probe_dir =
+# A command (run in YOUR environment) that returns exit 0 once the canary is visible on the OTHER
+# side (provider web / a second device). The token is provided via the CSM_PROBE_TOKEN env var and
+# an optional {token} placeholder. Example (rclone): rclone lsf remote:probe | findstr %CSM_PROBE_TOKEN%
+confirm_command =
+# How long to wait for the round-trip, and how often to re-check.
+timeout_seconds = 300
+poll_seconds = 15
 
 [move]
 # FoD / streaming-preserving: never expands the set of locally-materialized files.
@@ -51,3 +82,6 @@ retire_max_artifact_age_days = 7
 # user-data baseline (#4). Wildcard, case-insensitive, ';'-separated. Empty = built-in defaults
 # (OS noise + Google Drive .tmp.drivedownload/.tmp.driveupload when provider = google-drive).
 noise_dir_patterns =
+# Preflight (#4) flags a provider staging/noise dir at/above this size (GB) as 'large' - a
+# persistently large staging area can signal a stuck upload queue. Investigate before retiring.
+staging_warn_gb = 1

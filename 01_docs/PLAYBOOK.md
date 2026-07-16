@@ -99,7 +99,11 @@ A high error counter in the client during/after a move is usually **transient th
 - **Throttling looks like this:** the operation history's `resultCode` contains 429 (Too Many Requests) / 403 (Forbidden) on `Download`/`ActiveHydration` scenarios, + a throttle-history table with `ThrottledRequest_*` rows, dated to the hydration load. Conclusion: the counter falls toward zero once the hydration is done. Action: wait, optionally lower the download speed.
 - **Logs:** newer client logs may be cleartext (e.g. OneDrive's `.aodl`, magic `EBFGONED`); the provider's cloud API normally exposes no per-client sync logs.
 
-Detailed, reusable diagnostics: `03_src/py/read_sync_state.py` + `03_src/ps/Read-OneDriveSyncState.ps1`.
+Detailed, reusable diagnostics: `03_src/py/read_sync_state.py` + `03_src/ps/Read-OneDriveSyncState.ps1`. Since v0.5.0 `-Phase diagnose` wraps these behind a provider-aware dispatcher (`Invoke-CsmDiagnose.ps1`, OneDrive **and** Google Drive) that returns one redacted, fail-closed health verdict (`healthy`/`initializing`/`warning`/`blocked`/`unknown`); preflight consumes a fresh `initializing` as NEEDS_WAIT rather than a hard failure.
+
+## 7b. Prove the sync round-trips before retiring (#9)
+
+"Up to date" is a display, not proof that pending local changes actually left the machine. Before the destructive retire, run `-Phase probe` (dry-run) to check readiness, then `-Phase probe -Execute` to write ONE non-identifying canary into `[probe] probe_dir` and wait for `[probe] confirm_command` (a command *you* supply) to observe it on the other side. A confirmed round-trip is the only positive evidence that a locally-written change reaches the cloud; a timeout says it does not — do not retire. The toolkit never contacts the provider itself and never runs `-Execute` on your behalf.
 
 ## 8. Anti-patterns (do not)
 

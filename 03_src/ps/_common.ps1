@@ -318,3 +318,53 @@ function Invoke-CsmWalk {
         }
     }
 }
+
+function Get-CsmRobocopyExitInfo {
+    # Interpret a robocopy exit code (bit flags). 0-7 = success (bits below); >=8 = at least one failure.
+    param([int]$Code)
+    $bits = @()
+    if ($Code -band 1)  { $bits += 'copied' }
+    if ($Code -band 2)  { $bits += 'extra' }
+    if ($Code -band 4)  { $bits += 'mismatch' }
+    if ($Code -band 8)  { $bits += 'FAILED' }
+    if ($Code -band 16) { $bits += 'FATAL' }
+    return @{ code = $Code; bits = $bits; success = ($Code -lt 8); failed = ((($Code -band 8) -ne 0) -or (($Code -band 16) -ne 0)) }
+}
+
+function Get-CsmDirFileStats {
+    # Junction-safe file count + total bytes under a root (for post-move verification, #3).
+    param([string]$Root, [string[]]$NoisePatterns = @())
+    $n = 0; $bytes = [long]0
+    if (-not $Root -or -not (Test-Path -LiteralPath $Root)) { return @{ files = 0; bytes = 0 } }
+    Invoke-CsmWalk -Root $Root.TrimEnd('\') -NoisePatterns $NoisePatterns | ForEach-Object { $n++; $bytes += $_.Length }
+    return @{ files = $n; bytes = $bytes }
+}
+
+# ---------------------------------------------------------------------------
+# v0.5.0 additions: provider diagnostics classifiers (#5, #15). These are PURE
+# logic so they are unit-testable without a live provider; the diagnostic scripts
+# gather the real signals (logs, WAL sizes, process CPU) and feed them in here.
+# ---------------------------------------------------------------------------
+
+function Get-CsmLivenessVerdict {
+    # #15: classify startup/scan liveness from two samples taken N seconds apart.
+    # Returns 'initializing' (in a startup/scan phase AND making progress), 'hung' (in a startup
+    # phase but NO forward progress), or 'steady' (not in a startup phase).
+    param([double]$CpuDeltaSec = 0, [bool]$WalChanged = $false, [bool]$LogTicked = $false, [bool]$IoProgressed = $false, [bool]$InStartupPhase = $false)
+    $progress = ($CpuDeltaSec -gt 0.05) -or $WalChanged -or $LogTicked -or $IoProgressed
+    if ($InStartupPhase) { if ($progress) { return 'initializing' } else { return 'hung' } }
+    return 'steady'
+}
+
+function Get-CsmDiagnoseHealth {
+    # #5: aggregate provider signals into a single health outcome. Pure logic.
+    # $Signals keys (all optional bools): initializing, poisonMarker, stalled, errorsIncreasing,
+    # retryLoop, accessDenied, knownDangerMarker, verifiedHealthy.
+    param([hashtable]$Signals)
+    if (-not $Signals) { return 'unknown' }
+    if ($Signals['initializing']) { return 'initializing' }
+    if ($Signals['poisonMarker'] -or $Signals['stalled'] -or ($Signals['errorsIncreasing'] -and $Signals['retryLoop'])) { return 'blocked' }
+    if ($Signals['accessDenied'] -or $Signals['errorsIncreasing'] -or $Signals['retryLoop'] -or $Signals['knownDangerMarker']) { return 'warning' }
+    if ($Signals['verifiedHealthy']) { return 'healthy' }
+    return 'unknown'   # "no known danger markers" is NOT "verified healthy" (#5)
+}

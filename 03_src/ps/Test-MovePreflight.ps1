@@ -76,6 +76,66 @@ if ($rp['source_child_junctions'] -or $rp['target_child_junctions']) {
     $checks['reparse_note'] = 'Child junction(s) found under a root; their subtrees are EXCLUDED from inventory/verify (junction-safety). Confirm no needed data lives behind them.'
 }
 
+# 4c) Provider-mode consistency (#6): Google Drive 'mirror' mode expects COMPLETE local content, so
+#     any online-only file (or a non-green inventory) means the local set is incomplete -> block.
+$modeNow = try { Resolve-CsmProviderMode $cfg } catch { 'invalid' }
+if ($modeNow -eq 'mirror') {
+    $inv = Get-CsmLatestArtifact $wd 'inventory'
+    if (-not $inv) { $checks['mirror_content'] = 'UNKNOWN (run inventory first)'; $pass = $false }
+    elseif ([int]$inv.online_only -gt 0) { $checks['mirror_content'] = "FAIL: mirror mode but $($inv.online_only) online-only file(s) - local content incomplete"; $pass = $false }
+    elseif (-not (Test-CsmArtifactSuccess $inv)) { $checks['mirror_content'] = 'FAIL: latest inventory not green (access errors)'; $pass = $false }
+    else { $checks['mirror_content'] = 'OK (complete local content)' }
+} else {
+    $checks['mirror_content'] = 'n/a'
+}
+
+# 4d) Provider-internal staging health (#4): top-level isolated probe + size/accessibility flags.
+$noise = Get-CsmNoisePatterns $cfg
+$stg = New-Object System.Collections.Generic.List[object]
+$warnGb = [double](Get-CsmValue $cfg 'enumeration' 'staging_warn_gb' 1)
+if ($src -and (Test-Path -LiteralPath $src)) {
+    try {
+        foreach ($sd in [System.IO.Directory]::EnumerateDirectories($src.TrimEnd('\'))) {
+            $name = Split-Path $sd -Leaf
+            $isNoise = $false; foreach ($pat in $noise) { if ($name -like $pat) { $isNoise = $true; break } }
+            if (-not $isNoise) { continue }
+            $writable = Test-CsmWritable $sd   # isolated write+delete probe (no existing file touched)
+            $bytes = -1; try { $bytes = [long]((Get-ChildItem -LiteralPath $sd -Recurse -File -Force -EA SilentlyContinue | Measure-Object Length -Sum).Sum) } catch { }
+            $flag = 'ok'
+            if (-not $writable) { $flag = 'inaccessible' } elseif ($bytes -ge ($warnGb * 1GB)) { $flag = 'large' }
+            $stg.Add([pscustomobject]@{ name = $name; gb = $(if ($bytes -ge 0) { [math]::Round($bytes / 1GB, 3) } else { -1 }); writable = $writable; flag = $flag })
+        }
+    } catch { }
+}
+if ($stg.Count) {
+    $checks['staging'] = ($stg | ConvertTo-Json -Compress)
+    if (@($stg | Where-Object { $_.flag -ne 'ok' }).Count) {
+        $checks['staging_note'] = 'A provider staging dir is large or inaccessible - a persistently large/stuck staging area can signal a blocked upload queue. Investigate before retiring the source.'
+    }
+}
+
+# 4e) Recent provider diagnosis (#5/#15/#1): a fresh 'initializing' verdict means the client is mid
+#     startup/scan - the right answer is WAIT, not a hard fail. A fresh 'blocked' verdict is a real
+#     danger and fails. 'warning' is advisory (recorded, does not block). Staleness is honored: an old
+#     diagnose is ignored (transient states expire).
+$needsWait = $false
+$diag = Get-CsmLatestArtifact $wd 'diagnose'
+if ($diag) {
+    $maxAgeMin = [double](Get-CsmValue $cfg 'diagnose' 'max_age_minutes' 30)
+    $ageDays = Get-CsmArtifactAgeDays $diag (Get-Date).ToUniversalTime()   # zone-correct parse (AssumeUniversal)
+    $ageMin = if ($null -ne $ageDays) { $ageDays * 1440.0 } else { $null }
+    $dh = "$($diag.health)"
+    if ($null -ne $ageMin -and $ageMin -ge 0 -and $ageMin -le $maxAgeMin) {
+        $checks['diagnose_health'] = $dh
+        $checks['diagnose_age_min'] = [math]::Round($ageMin, 1)
+        if ($dh -eq 'initializing') { $checks['diagnose_note'] = 'Provider is initializing (startup/scan in progress) - WAIT for it to reach steady/healthy before moving.'; $needsWait = $true; $pass = $false }
+        elseif ($dh -eq 'blocked')  { $checks['diagnose_note'] = 'Provider diagnosis is BLOCKED (stalled / poison marker / retry loop) - resolve before moving.'; $pass = $false }
+        elseif ($dh -eq 'warning')  { $checks['diagnose_note'] = 'Provider diagnosis raised a WARNING (access-denied or rising errors) - advisory; investigate.' }
+    } else {
+        $checks['diagnose_health'] = "STALE (ignored; age too old or unknown)"
+    }
+}
+
 # 5) Sync-health gate (#1): a real gate, not a passive reminder.
 #    CONFIRMED only via -SyncConfirmed or [move] assume_up_to_date=true; otherwise NEEDS_CONFIRMATION -> FAIL.
 $sh = Resolve-CsmSyncHealth $cfg -Confirmed:$SyncConfirmed
@@ -90,5 +150,5 @@ foreach ($k in $checks.Keys) { $meta[$k] = $checks[$k] }
 $meta['PASS'] = $pass   # legacy readability field
 Write-CsmAtomic $done ($meta | ConvertTo-Json)
 $meta.GetEnumerator() | ForEach-Object { Write-CsmLog ("{0}: {1}" -f $_.Key, $_.Value) $log }
-$verdict = if ($pass) { 'PASS' } elseif ($sh.status -ne 'CONFIRMED') { 'NEEDS_CONFIRMATION' } else { 'FAIL' }
+$verdict = if ($pass) { 'PASS' } elseif ($needsWait) { 'NEEDS_WAIT' } elseif ($sh.status -ne 'CONFIRMED') { 'NEEDS_CONFIRMATION' } else { 'FAIL' }
 Write-Host ("PREFLIGHT: {0}{1}" -f $verdict, ($(if ($pass) { '' } else { ' - see ' + $done })))
