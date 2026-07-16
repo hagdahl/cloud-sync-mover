@@ -17,13 +17,17 @@ $stamp  = New-CsmStamp
 $report = Join-Path $wd "structure_report_$stamp.txt"
 $done   = Join-Path $wd "structure_${stamp}_done.json"
 
-# Build target set of relative paths
+# Build target set of relative paths - junction-safe (#13) + noise-aware (#4), same as inventory.
+$tgt = $tgt.TrimEnd('\')
+$noise = Get-CsmNoisePatterns $cfg
+$tskip = New-Object System.Collections.Generic.List[object]
 $cmp = [System.StringComparer]::OrdinalIgnoreCase
 $set = [System.Collections.Generic.HashSet[string]]::new($cmp)
 $tCount = 0
-foreach ($f in [System.IO.Directory]::EnumerateFiles($tgt, "*", [System.IO.SearchOption]::AllDirectories)) {
-    [void]$set.Add($f.Substring($tgt.Length + 1)); $tCount++
+Invoke-CsmWalk -Root $tgt -NoisePatterns $noise -Skipped $tskip | ForEach-Object {
+    [void]$set.Add($_.FullName.Substring($tgt.Length + 1)); $tCount++
 }
+$tAccessErrors = @($tskip | Where-Object { $_.kind -like '*access-error' }).Count
 
 # Diff inventory against target
 $sr = [System.IO.StreamReader]::new($InventoryCsv); [void]$sr.ReadLine()
@@ -42,16 +46,20 @@ while (($line = $sr.ReadLine()) -ne $null) {
 }
 $sr.Close(); $mw.Close()
 $real = $missing - $junk
-# Fail closed (#7): any real (non-junk) missing file means the structure is not verified.
-$cats = @(); if ($real -gt 0) { $cats += 'missing-files' }
-$sum = New-CsmMeta -Config $cfg -Phase 'structure' -Success ($real -eq 0) -Errors $real -ErrorCategories $cats
-$sum['target_files']    = $tCount
-$sum['inventory_total'] = $total
-$sum['present']         = $present
-$sum['missing']         = $missing
-$sum['missing_junk']    = $junk
-$sum['missing_real']    = $real
-$sum['extra_approx']    = ($tCount - $present)
-$sum['report']          = $report
+# Fail closed (#7): a real (non-junk) missing file, or an unreadable target directory, fails the structure check.
+$cats = @(); if ($real -gt 0) { $cats += 'missing-files' }; if ($tAccessErrors -gt 0) { $cats += 'target-access' }
+$sum = New-CsmMeta -Config $cfg -Phase 'structure' -Success (($real -eq 0) -and ($tAccessErrors -eq 0)) -Errors ($real + $tAccessErrors) -ErrorCategories $cats
+$sum['target_files']        = $tCount
+$sum['inventory_total']     = $total
+$sum['present']             = $present
+$sum['missing']             = $missing
+$sum['missing_junk']        = $junk
+$sum['missing_real']        = $real
+$sum['extra_approx']        = ($tCount - $present)
+$sum['target_is_junction']  = (Test-CsmReparsePoint $tgt)
+$sum['target_reparse_skipped'] = @($tskip | Where-Object { $_.kind -eq 'reparse' }).Count
+$sum['target_noise_skipped']   = @($tskip | Where-Object { $_.kind -eq 'noise' }).Count
+$sum['target_access_errors']   = $tAccessErrors
+$sum['report']              = $report
 Write-CsmAtomic $done ($sum | ConvertTo-Json)
 Write-Host "Structure: present=$present missing=$missing (junk=$junk real=$real) extra~$($tCount-$present) -> $report"

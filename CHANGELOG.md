@@ -1,6 +1,6 @@
 # CHANGELOG
 
-> Version 0.3.0
+> Version 0.4.0
 
 Format: date - change - rollback.
 
@@ -60,3 +60,13 @@ Hardened the safety gates and closed reproducibility gaps, from the open issue b
 - Rollback: `git revert` this commit / reset to tag `v0.2.0`. No behavior of existing green paths changed except the two new gates (which fail safe); no data operation altered beyond adding `/XJ` exclusions.
 - Hardening from an adversarial code review of the gate: identity check now fails **closed** on any missing field; a "hydrating" verify re-run now writes a non-green artifact (so a stale earlier green cannot be reused); "latest artifact" is chosen by content timestamp (not file mtime); future-dated artifacts are rejected; `retire-source` asserts the source exists before robocopy; and `Test-RepoHealth.ps1` no longer throws on git's stderr notices.
 - Verification: extended unit tests (provider/mode, sync-health, artifact success/age, retire gate with fixtures incl. identity fail-closed, BOM) — run `04_tests/validation/Test-Toolkit.ps1` on Windows; `.ps1` ASCII-only; orchestrator dry-run unchanged.
+
+## 2026-07-16 - v0.4.0: junction-safe and noise-aware enumeration
+Closes the highest-remaining safety gap. The read phases now share one junction-safe, provider-noise-aware file walk. Scope chosen to be verifiable on real Windows (junctions + robocopy) without a live cloud account; the remaining backlog (#3, #5, #6 behavior, #8, #9) is deferred to v0.5.0.
+- **Junction / reparse safety (#13):** new `Invoke-CsmWalk` never traverses THROUGH a reparse point, so a junction under the root can no longer double-count, cross volumes, or (with the v0.3.0 `/XJ` on retire) be deleted through. Inventory and structure now use it; `Test-CsmReparsePoint` + `Resolve-CsmPhysicalRoot` added; preflight detects and reports reparse points at/above/under each root and flags any child junction whose subtree is therefore excluded; every artifact is stamped with `physical_source_root`/`physical_target_root` so the retire gate compares like with like.
+- **Provider-internal temp/staging classification (#4):** `Get-CsmNoisePatterns` (provider-aware, config-overridable via `[enumeration] noise_dir_patterns`) classifies OS noise + Google Drive `.tmp.drivedownload`/`.tmp.driveupload` staging dirs out of the user-data baseline; inventory/structure record `reparse_skipped`, `noise_skipped`, and `access_errors`, and fail closed on an unreadable directory (an access error could hide user data).
+- Fixed the pre-existing trailing-backslash `source_root` off-by-one in relative-path computation (roots are normalized with `TrimEnd('\')`).
+- New config: `[enumeration] noise_dir_patterns` (in `config.example`).
+- Files: `03_src/ps/_common.ps1` (+4 helpers, physical roots in `New-CsmMeta`), `Invoke-Inventory.ps1`, `Compare-MoveStructure.ps1`, `Test-MovePreflight.ps1`, `config.example`, docs (DECISIONS ADR-011, DATA-FORMATS, PROVIDER-NOTES, USER_GUIDE), `04_tests/validation/Test-Toolkit.ps1` (+8 unit tests incl. a real junction).
+- Rollback: `git revert` this commit / reset to tag `v0.3.0`. Enumeration now excludes reparse/noise subtrees by design; if a needed subtree lived behind a junction, preflight reports it so the operator can act.
+- Verification: all unit tests pass on Windows PowerShell 5.1 and PowerShell 7, including a real `mklink /J` junction that the walk correctly skips; `.ps1` ASCII-only; orchestrator dry-run unchanged. Deferred #3/#5/#6/#8/#9 need live OneDrive/Google Drive fixtures.

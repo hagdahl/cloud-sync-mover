@@ -123,6 +123,8 @@ function New-CsmMeta {
         mode            = $mode
         source_root     = (Get-CsmValue $Config 'paths' 'source_root')
         target_root     = (Get-CsmValue $Config 'paths' 'target_root')
+        physical_source_root = (Resolve-CsmPhysicalRoot (Get-CsmValue $Config 'paths' 'source_root'))
+        physical_target_root = (Resolve-CsmPhysicalRoot (Get-CsmValue $Config 'paths' 'target_root'))
         finishedUtc     = (Get-Date).ToUniversalTime().ToString('s')
         success         = [bool]$Success
         errors          = [int]$Errors
@@ -228,4 +230,91 @@ function Assert-CsmRetireReady {
     }
 
     return @{ ok = ($reasons.Count -eq 0); reasons = $reasons }
+}
+
+# ---------------------------------------------------------------------------
+# v0.4.0 additions: junction/reparse-safe + provider-noise-aware enumeration
+# (#13, #4). The read phases must NOT traverse THROUGH junctions (a junction can
+# point at another volume -> double-count or cross-volume), and should classify
+# provider-internal temp/staging dirs out of the user-data baseline.
+# ---------------------------------------------------------------------------
+
+function Test-CsmReparsePoint {
+    # True if $Path is a reparse point (junction / symlink / mount point).
+    param([string]$Path)
+    try { return ((([System.IO.File]::GetAttributes($Path)) -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) }
+    catch { return $false }
+}
+
+function Resolve-CsmPhysicalRoot {
+    # Best-effort canonical/physical form of a root, for consistent cross-phase identity and
+    # junction detection. On PS7 a junction root resolves to its link target; on PS5.1 it falls
+    # back to the normalized full path (LinkTarget is unavailable there). Trailing slash trimmed.
+    param([string]$Path)
+    if (-not $Path) { return '' }
+    $full = $Path
+    try { $full = [System.IO.Path]::GetFullPath($Path) } catch { }
+    try {
+        $di = New-Object System.IO.DirectoryInfo $full
+        if ($di.Exists -and (($di.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
+            $lt = $null
+            try { $lt = $di.LinkTarget } catch { }   # .NET 6+/PS7 only
+            if ($lt) { try { $full = [System.IO.Path]::GetFullPath($lt) } catch { } }
+        }
+    } catch { }
+    return $full.TrimEnd('\')
+}
+
+function Get-CsmNoisePatterns {
+    # #4: directory-name wildcard patterns for provider-internal temp/staging + OS noise to skip
+    # and classify out of the user-data baseline. Override via [enumeration] noise_dir_patterns = a;b;c.
+    param($Config)
+    $override = Get-CsmValue $Config 'enumeration' 'noise_dir_patterns'
+    if ($override) { return @($override -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
+    $os = @('$Recycle.Bin', 'System Volume Information', 'Found.???')
+    $prov = "$(Get-CsmValue $Config 'provider' 'name' 'unknown')".ToLower()
+    if ($prov -eq 'google-drive') {
+        return $os + @('.tmp.drivedownload', '.tmp.driveupload', '.drivedownload', '.driveupload')
+    }
+    return $os
+}
+
+function Invoke-CsmWalk {
+    # Junction-safe, noise-aware recursive file walk. STREAMS System.IO.FileInfo for each user-data
+    # file (pipeline-friendly, memory-light for huge trees). It never descends THROUGH a reparse-point
+    # directory or a provider-noise directory; those (and access errors) are recorded into $Skipped.
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [string[]]$NoisePatterns = @(),
+        [System.Collections.Generic.List[object]]$Skipped = $null
+    )
+    $stack = [System.Collections.Generic.Stack[string]]::new()
+    $stack.Push($Root)
+    while ($stack.Count -gt 0) {
+        $dir = $stack.Pop()
+        try {
+            foreach ($sd in [System.IO.Directory]::EnumerateDirectories($dir)) {
+                $name = [System.IO.Path]::GetFileName($sd)
+                if (Test-CsmReparsePoint $sd) {
+                    if ($null -ne $Skipped) { $Skipped.Add([pscustomobject]@{ path = $sd; kind = 'reparse' }) }
+                    continue
+                }
+                $noise = $false
+                foreach ($pat in $NoisePatterns) { if ($name -like $pat) { $noise = $true; break } }
+                if ($noise) {
+                    $sz = -1; try { $sz = [long]((Get-ChildItem -LiteralPath $sd -Recurse -File -Force -EA SilentlyContinue | Measure-Object Length -Sum).Sum) } catch { }
+                    if ($null -ne $Skipped) { $Skipped.Add([pscustomobject]@{ path = $sd; kind = 'noise'; name = $name; bytes = $sz }) }
+                    continue
+                }
+                $stack.Push($sd)
+            }
+        } catch {
+            if ($null -ne $Skipped) { $Skipped.Add([pscustomobject]@{ path = $dir; kind = 'dir-access-error'; note = $_.Exception.Message }) }
+        }
+        try {
+            foreach ($f in [System.IO.Directory]::EnumerateFiles($dir)) { [System.IO.FileInfo]::new($f) }
+        } catch {
+            if ($null -ne $Skipped) { $Skipped.Add([pscustomobject]@{ path = $dir; kind = 'file-access-error'; note = $_.Exception.Message }) }
+        }
+    }
 }

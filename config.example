@@ -44,3 +44,10 @@ assume_up_to_date = false
 move_completed_utc =
 # Retire-source gate (#2): reject preflight/structure/verify artifacts older than this many days.
 retire_max_artifact_age_days = 7
+
+[enumeration]
+# Junction/reparse safety (#13) is always on: the read phases never traverse THROUGH a junction.
+# Provider-internal temp/staging + OS-noise directory names to skip and classify out of the
+# user-data baseline (#4). Wildcard, case-insensitive, ';'-separated. Empty = built-in defaults
+# (OS noise + Google Drive .tmp.drivedownload/.tmp.driveupload when provider = google-drive).
+noise_dir_patterns =

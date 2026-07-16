@@ -38,12 +38,13 @@ Written last, atomically. Since v0.3.0 every completion marker carries a common 
 | provider | string | provider.name at run time |
 | mode | string | `streaming` \| `mirror` \| `n/a` (Google Drive mode; #6) |
 | source_root / target_root | string | roots this artifact refers to (identity check for the retire gate) |
+| physical_source_root / physical_target_root | string | resolved physical root, so junction- vs physical-path phases compare like with like (#13) |
 | finishedUtc | ISO-8601 | UTC completion time |
 | success | bool | phase-specific green/complete verdict (#7) — false on enumeration/hash/read errors or unmet criteria |
 | errors | integer | error count |
 | errorCategories | string[] | e.g. `enumeration`, `hash-read`, `missing-files`, `md5-mismatch`, `read-error`, `robocopy` |
 
-Phase-specific counters follow the header (e.g. inventory: `files`, `online_only`; structure: `missing_real`; verify: `md5_match`, `md5_mismatch`; preflight also keeps the legacy `PASS`). The retire-source gate requires the latest `preflight`, `structure`, and `verify` markers to be present, `success:true`, mutually consistent in identity, recent, and stable (see PLAYBOOK / USER_GUIDE).
+Phase-specific counters follow the header (e.g. inventory: `files`, `online_only`, and since v0.4.0 `root_is_junction`, `reparse_skipped`, `noise_skipped`, `access_errors`, `skipped[]`; structure: `missing_real`, `target_reparse_skipped`, `target_access_errors`; verify: `md5_match`, `md5_mismatch`; preflight keeps the legacy `PASS` plus a `reparse` summary). The retire-source gate requires the latest `preflight`, `structure`, and `verify` markers to be present, `success:true`, mutually consistent in identity, recent, and stable (see PLAYBOOK / USER_GUIDE).
 
 ## state_report.json  (diagnostics)
 `{ accounts: [ { name, files, conflicts, fileStatus_dist, throttle_events, recent_error_codes } ] }` — from the sync engine's SQLite state (read-only snapshot).

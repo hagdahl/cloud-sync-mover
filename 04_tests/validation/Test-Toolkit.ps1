@@ -107,5 +107,34 @@ Get-ChildItem $repo -Recurse -Filter *.md -File | Where-Object { $_.FullName -no
 Check "md UTF-8 without BOM" ($bomMd.Count -eq 0)
 if ($bomMd.Count) { Write-Host ("  BOM in: " + ($bomMd -join ', ')) }
 
+# 11) reparse + physical-root helpers (#13)
+$nd = Join-Path ([System.IO.Path]::GetTempPath()) ("csm_rp_" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force $nd | Out-Null
+Check "reparse false on normal dir" (-not (Test-CsmReparsePoint $nd))
+Check "physical root trims slash"   ((Resolve-CsmPhysicalRoot ($nd + '\')) -eq $nd)
+Remove-Item -Recurse -Force $nd
+
+# 12) provider-noise patterns (#4)
+$tmpn = [System.IO.Path]::GetTempFileName()
+Set-Content $tmpn "[provider]`nname = google-drive"
+Check "noise gdrive incl driveupload"   ((Get-CsmNoisePatterns (Get-CsmConfig -Path $tmpn)) -contains '.tmp.driveupload')
+Set-Content $tmpn "[provider]`nname = onedrive-personal"
+Check "noise onedrive excl driveupload" (-not ((Get-CsmNoisePatterns (Get-CsmConfig -Path $tmpn)) -contains '.tmp.driveupload'))
+Set-Content $tmpn "[provider]`nname = onedrive-personal`n[enumeration]`nnoise_dir_patterns = foo;bar"
+Check "noise override respected" (((Get-CsmNoisePatterns (Get-CsmConfig -Path $tmpn)) -join ',') -eq 'foo,bar')
+Remove-Item $tmpn
+
+# 13) Invoke-CsmWalk skips junctions and noise dirs (#13/#4)
+$wr = Join-Path ([System.IO.Path]::GetTempPath()) ("csm_walk_" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force "$wr\keep","$wr\.tmp.driveupload","$wr\real" | Out-Null
+"a" | Out-File "$wr\top.txt"; "b" | Out-File "$wr\keep\k.txt"; "n" | Out-File "$wr\.tmp.driveupload\n.txt"; "r" | Out-File "$wr\real\r.txt"
+cmd /c mklink /J "$wr\link" "$wr\real" | Out-Null
+$sk = New-Object System.Collections.Generic.List[object]
+$rels = @(Invoke-CsmWalk -Root $wr -NoisePatterns @('.tmp.driveupload') -Skipped $sk | ForEach-Object { $_.FullName.Substring($wr.Length + 1) })
+Check "walk yields user files" (($rels -contains 'top.txt') -and ($rels -contains 'keep\k.txt') -and ($rels -contains 'real\r.txt'))
+Check "walk skips noise dir"   (-not (($rels -join '|').Contains('.tmp.driveupload')))
+Check "walk skips junction"    ((@($sk | Where-Object { $_.kind -eq 'reparse' }).Count -ge 1) -and (-not (($rels -join '|').Contains('link'))))
+Remove-Item -Recurse -Force $wr
+
 Write-Host ""
 if ($script:fail -eq 0) { Write-Host "ALL SMOKE TESTS PASSED" } else { Write-Host "$($script:fail) TEST(S) FAILED"; exit 1 }

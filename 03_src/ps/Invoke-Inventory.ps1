@@ -19,14 +19,19 @@ $sw  = [System.IO.StreamWriter]::new($csv, $false, $enc)
 $swp = [System.IO.StreamWriter]::new($pin, $false, $enc)
 $sw.WriteLine("RelPath`tSizeBytes`tLastWriteUtc`tAttrHex`tStatus")
 $c = @{ 'online-only' = 0; 'local-available' = 0; 'always-keep' = 0 }
+$root = $root.TrimEnd('\')
+$noise = Get-CsmNoisePatterns $cfg
+$skipped = New-Object System.Collections.Generic.List[object]
 $n = 0; $err = 0; $enumOk = $true; $t0 = Get-Date
 try {
-    foreach ($p in [System.IO.Directory]::EnumerateFiles($root, "*", [System.IO.SearchOption]::AllDirectories)) {
+    # Junction-safe (#13) + noise-aware (#4): never traverse THROUGH a reparse point or a
+    # provider-internal temp/staging dir; those are recorded in $skipped, not counted as user data.
+    Invoke-CsmWalk -Root $root -NoisePatterns $noise -Skipped $skipped | ForEach-Object {
+        $fi = $_
         try {
-            $fi  = New-Object System.IO.FileInfo $p
             $a   = [int]$fi.Attributes
             $st  = Get-CsmFileStatus $a
-            $rel = $p.Substring($root.Length + 1)
+            $rel = $fi.FullName.Substring($root.Length + 1)
             $sw.WriteLine(("{0}`t{1}`t{2}`t{3}`t{4}" -f $rel, $fi.Length, $fi.LastWriteTimeUtc.ToString("s"), ("0x{0:X}" -f $a), $st))
             if ($st -ne 'online-only') { $swp.WriteLine($rel) }
             $c[$st]++; $n++
@@ -36,17 +41,30 @@ try {
 } catch { $enumOk = $false; Write-CsmLog "ENUM ERROR: $($_.Exception.Message)" $log }
 $sw.Flush(); $sw.Close(); $swp.Flush(); $swp.Close()
 
-# Fail closed (#7): enumeration failure or any per-file error means this baseline is not authoritative.
-$cats = @(); if (-not $enumOk) { $cats += 'enumeration' }; if ($err -gt 0) { $cats += 'file-access' }
-$success = ($enumOk -and $err -eq 0)
-$sum = New-CsmMeta -Config $cfg -Phase 'inventory' -Success $success -Errors $err -ErrorCategories $cats
-$sum['seconds']         = [math]::Round(((Get-Date) - $t0).TotalSeconds)
-$sum['files']           = $n
-$sum['online_only']     = $c['online-only']
-$sum['local_available'] = $c['local-available']
-$sum['always_keep']     = $c['always-keep']
-$sum['csv']             = $csv
-$sum['pinlist']         = $pin
+$reparseSkipped = @($skipped | Where-Object { $_.kind -eq 'reparse' }).Count
+$noiseSkipped   = @($skipped | Where-Object { $_.kind -eq 'noise' }).Count
+$accessErrors   = @($skipped | Where-Object { $_.kind -like '*access-error' }).Count
+
+# Fail closed (#7): enumeration failure, a per-file error, or a walk access-error (an unreadable
+# directory could hide user data) means this baseline is not authoritative.
+$cats = @()
+if (-not $enumOk)        { $cats += 'enumeration' }
+if ($err -gt 0)          { $cats += 'file-access' }
+if ($accessErrors -gt 0) { $cats += 'walk-access' }
+$success = ($enumOk -and $err -eq 0 -and $accessErrors -eq 0)
+$sum = New-CsmMeta -Config $cfg -Phase 'inventory' -Success $success -Errors ($err + $accessErrors) -ErrorCategories $cats
+$sum['seconds']          = [math]::Round(((Get-Date) - $t0).TotalSeconds)
+$sum['files']            = $n
+$sum['online_only']      = $c['online-only']
+$sum['local_available']  = $c['local-available']
+$sum['always_keep']      = $c['always-keep']
+$sum['root_is_junction'] = (Test-CsmReparsePoint $root)
+$sum['reparse_skipped']  = $reparseSkipped
+$sum['noise_skipped']    = $noiseSkipped
+$sum['access_errors']    = $accessErrors
+$sum['skipped']          = @($skipped | Select-Object -First 200)
+$sum['csv']              = $csv
+$sum['pinlist']          = $pin
 Write-CsmAtomic $done ($sum | ConvertTo-Json)
-Write-CsmLog ("Inventory done: {0} files ({1} online-only, {2} local, {3} always-keep), {4} errors" -f $n, $c['online-only'], $c['local-available'], $c['always-keep'], $err) $log
+Write-CsmLog ("Inventory done: {0} files ({1} online-only, {2} local, {3} always-keep); skipped {4} junction dir(s), {5} noise dir(s); {6} access error(s)" -f $n, $c['online-only'], $c['local-available'], $c['always-keep'], $reparseSkipped, $noiseSkipped, $accessErrors) $log
 Write-Host "OK -> $csv"

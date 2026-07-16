@@ -54,6 +54,28 @@ try {
     if ($pd -and $pd.MediaType -eq 'HDD') { $checks['smr_warning'] = 'Target is an HDD - verify the model is NOT SMR before hosting an active sync folder here.' }
 } catch { $checks['target_media'] = "ERROR: $($_.Exception.Message)" }
 
+# 4b) Reparse-point / junction awareness (#13): report whether each root IS a reparse point, where
+#     it physically resolves, any reparse ancestor, and any immediate child junction (whose subtree
+#     the read phases deliberately skip - flag it so the operator knows a subtree was excluded).
+$rp = [ordered]@{}
+foreach ($pair in @(@('source', $src), @('target', $tgt))) {
+    $label = $pair[0]; $p = $pair[1]
+    if (-not $p) { continue }
+    $rp["${label}_is_reparse"] = (Test-CsmReparsePoint $p)
+    $rp["${label}_physical"]   = (Resolve-CsmPhysicalRoot $p)
+    $anc = @()
+    try { $d = (New-Object System.IO.DirectoryInfo $p).Parent
+          while ($d) { if (($d.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { $anc += $d.FullName }; $d = $d.Parent } } catch { }
+    if ($anc.Count) { $rp["${label}_reparse_ancestors"] = ($anc -join '; ') }
+    $child = @()
+    try { foreach ($sd in [System.IO.Directory]::EnumerateDirectories($p)) { if (Test-CsmReparsePoint $sd) { $child += (Split-Path $sd -Leaf) } } } catch { }
+    if ($child.Count) { $rp["${label}_child_junctions"] = ($child -join '; ') }
+}
+$checks['reparse'] = ($rp | ConvertTo-Json -Compress)
+if ($rp['source_child_junctions'] -or $rp['target_child_junctions']) {
+    $checks['reparse_note'] = 'Child junction(s) found under a root; their subtrees are EXCLUDED from inventory/verify (junction-safety). Confirm no needed data lives behind them.'
+}
+
 # 5) Sync-health gate (#1): a real gate, not a passive reminder.
 #    CONFIRMED only via -SyncConfirmed or [move] assume_up_to_date=true; otherwise NEEDS_CONFIRMATION -> FAIL.
 $sh = Resolve-CsmSyncHealth $cfg -Confirmed:$SyncConfirmed
