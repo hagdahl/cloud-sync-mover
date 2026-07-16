@@ -39,6 +39,8 @@ Windows 10/11. PowerShell 5.1 or 7.x. Python 3.11 (standard library only; used o
    `powershell -File 03_src\ps\Invoke-CloudSyncMove.ps1 -Config .\config.local`
 3. Follow the phases in `01_docs/USER_GUIDE.md`. Each phase has its own verification; deletion of the source happens only after the time gate + an explicit `-Execute`.
 
+**Configuration override order (B13):** a setting is resolved in this precedence, first match wins — **CLI flag → environment variable (`CSM_<SECTION>_<KEY>`) → `config.local` → `config.example` → built-in code default.** Only `config.example` is checked in; `config.local` is `.gitignore`d and holds your real paths.
+
 ## The method in one sentence
 
 Use **the cloud client's own move function** (never a junction/symlink), preserve Files-On-Demand placeholders (don't materialize everything), and prove zero data loss through inventory → MD5 baseline of local files → structure diff → hydration-aware post-verification → cloud ground truth via the provider's API, before the source is ever touched.

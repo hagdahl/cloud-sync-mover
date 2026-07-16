@@ -1,6 +1,6 @@
 # CHANGELOG
 
-> Version 0.5.0
+> Version 0.5.1
 
 Format: date - change - rollback.
 
@@ -83,3 +83,14 @@ Closes the remaining pre-retire backlog. Two themes: make the destructive step r
 - Files: `03_src/ps/_common.ps1` (+`Get-CsmLivenessVerdict`, `Get-CsmDiagnoseHealth`), new `Invoke-CsmDiagnose.ps1`, `Read-GoogleDriveState.ps1`, `Invoke-RoundTripProbe.ps1`, `Invoke-CloudSyncMove.ps1` (diagnose route + probe phase), `Test-MovePreflight.ps1` (mirror/staging/diagnose checks), `config.example`, docs (DECISIONS ADR-012, PROVIDER-NOTES, USER_GUIDE, PLAYBOOK, DATA-FORMATS), `04_tests/validation/Test-Toolkit.ps1` (+ liveness/health/gdrive-reader/probe unit tests).
 - Rollback: `git revert` this commit / reset to tag `v0.4.0`. No behavior change to the read-only phases' outputs; the retire backup path changed name (timestamp-free) - a prior timestamped backup from an earlier version is not auto-detected, so finish any in-flight retire on the old version first.
 - Verification: all unit tests pass on Windows PowerShell 5.1 and PowerShell 7 (incl. classifiers, a synthetic Google Drive cache fixture, and the probe dry-run writing no canary); `.ps1` ASCII-only + parse-clean. Live OneDrive/Google Drive verification of #5/#8/#9/#15 (real cache logs, an actual round-trip, real conflict/error codes) is the operator step - the logic is implemented and fixture-tested; the provider paths/markers and confirm_command are best-effort defaults to be tuned against real logs.
+## 2026-07-16 20:40 UTC - v0.5.1: align to cowork-project-instructions v0.61
+Compliance pass against the standard's current version (v0.61). No PART A violations were found; this closes the PART B partials an audit surfaced (mostly documentation-classification and encoding/error-handling detail). No change to any move/verify behavior.
+- **B1 architecture classifications:** `01_docs/ARCHITECTURE.md` now carries a per-file-type logic/data/hybrid table and an **edit-status per-directory** table (editable / read-only / tool-written / never-touch — the rule added to the standard in its v0.54), and the publishability level (2/3) is recorded as **ADR-013** in `00_admin/DECISIONS.md` rather than only asserted inline. The phase map + encoding section were refreshed to include the v0.5.0 scripts (diagnose dispatcher, Google Drive reader, round-trip probe).
+- **B8 true error classification:** the writability preflight no longer returns a bare `false` on denial - `Get-CsmWriteDenialCause` + `Test-CsmWritableDetail` classify it as `permission-or-cfa` (ACL / Defender Controlled-Folder-Access), `reparse-or-placeholder`, `process-lock`, or `not-found`, and preflight surfaces the cause + a hint (`target_writable_cause` / `target_writable_hint`).
+- **B8 no silent failure:** the empty `catch {}` in `Write-CsmLog` now surfaces a log-write failure on the host (the line was already emitted, so no data is lost) instead of swallowing it.
+- **A4 encoding self-test:** `Test-Toolkit.ps1` adds a runtime write->read-back of a known non-ASCII string via `Write-CsmAtomic` (asserts byte-identical + no BOM), plus a `.py` UTF-8-without-BOM check and unit tests for the denial classifier.
+- **B13 override order:** documented in `README.md` (CLI > ENV > config.local > config.example > code default), not only in `config.example`.
+- **B2:** CHANGELOG entries now carry date **and time**.
+- Files: `01_docs/ARCHITECTURE.md`, `00_admin/DECISIONS.md` (ADR-013), `03_src/ps/_common.ps1`, `03_src/ps/Test-MovePreflight.ps1`, `04_tests/validation/Test-Toolkit.ps1`, `README.md`, `CHANGELOG.md`.
+- Rollback: `git revert` this commit / reset to tag `v0.5.0`. Behavior of existing green paths is unchanged; the only functional addition is a richer (still fail-closed) preflight writability message.
+- Verification: full smoke suite green on Windows PowerShell 5.1 and 7 (adds encoding round-trip + denial-classifier tests incl. a real junction); `.ps1` ASCII-only + parse-clean; `.md`/`.py` no-BOM. The two audit items about tagging and `gc.auto 0` were confirmed already satisfied on the authoritative working copy (tag `v0.5.0` on origin; `gc.auto 0` set) - no change needed.

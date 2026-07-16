@@ -38,10 +38,21 @@ try {
     if ($needed -ne $null -and $free -lt ($needed * 1.1)) { $checks['space_ok'] = $false; $pass = $false } else { $checks['space_ok'] = $true }
 } catch { $checks['target_free_gb'] = "ERROR: $($_.Exception.Message)"; $pass = $false }
 
-# 3) Writability probe on the target root
+# 3) Writability probe on the target root (B8: classify the denial cause, not a bare false)
 $probeDir = if (Test-Path -LiteralPath $tgt) { $tgt } else { $tgtRoot }
-$checks['target_writable'] = Test-CsmWritable $probeDir
-if (-not $checks['target_writable']) { $pass = $false }
+$wr = Test-CsmWritableDetail $probeDir
+$checks['target_writable'] = $wr.writable
+if (-not $wr.writable) {
+    $checks['target_writable_cause'] = $wr.cause
+    $checks['target_writable_hint']  = switch ($wr.cause) {
+        'permission-or-cfa'      { 'Access denied - check NTFS ACLs and Windows Defender Controlled Folder Access (the target may be a protected folder).' }
+        'reparse-or-placeholder' { 'Target is a reparse point / cloud placeholder - resolve it to a real physical directory before hosting a sync folder.' }
+        'process-lock'           { 'Target is locked by another process - close the app holding it (or the sync client) and retry.' }
+        'not-found'              { 'Target path does not exist - create it or fix target_root.' }
+        default                  { 'Unclassified write failure - inspect the target manually.' }
+    }
+    $pass = $false
+}
 
 # 4) Disk media type (SMR warning: SMR shows as HDD; look up the model manually)
 try {

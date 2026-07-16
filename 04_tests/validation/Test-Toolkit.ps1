@@ -200,5 +200,42 @@ Check "probe dry-run ready" ($null -ne $pd2 -and $pd2.config_ok -eq $true)
 Check "probe dry-run wrote no canary" (@(Get-ChildItem -LiteralPath $pdir -Filter '.csm_roundtrip_*' -Force -EA SilentlyContinue).Count -eq 0)
 Remove-Item -Recurse -Force $pbase
 
+# 19) encoding self-test (A4/B8): a known non-ASCII string survives write->read-back byte-identical,
+#     and the artifact carries no BOM. This is the runtime half of the encoding contract (the static
+#     half - .ps1 ASCII, .md/.py no-BOM - is checks 4/10/19b).
+$encf = Join-Path ([System.IO.Path]::GetTempPath()) ("csm_enc_" + [guid]::NewGuid().ToString('N') + ".txt")
+$sample = [string][char]0x00E5 + [char]0x00E4 + [char]0x00F6 + " gra" + [char]0x00DF + "e"   # a-ring a-uml o-uml, sharp-s
+Write-CsmAtomic $encf $sample
+$readBack = [System.IO.File]::ReadAllText($encf, (New-Object System.Text.UTF8Encoding($false)))
+Check "encoding round-trip identical" ($readBack -eq $sample)
+$encBytes = [System.IO.File]::ReadAllBytes($encf)
+Check "atomic write no BOM" (-not ($encBytes.Length -ge 3 -and $encBytes[0] -eq 0xEF -and $encBytes[1] -eq 0xBB -and $encBytes[2] -eq 0xBF))
+Remove-Item -LiteralPath $encf -Force
+
+# 19b) tracked .py are UTF-8 without BOM (B8)
+$bomPy = @()
+Get-ChildItem $ps -Recurse -Filter *.py -File -EA SilentlyContinue | ForEach-Object {
+    $b = [System.IO.File]::ReadAllBytes($_.FullName)
+    if ($b.Length -ge 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF) { $bomPy += $_.Name }
+}
+$pyDir = Join-Path (Split-Path $ps -Parent) 'py'
+if (Test-Path $pyDir) { Get-ChildItem $pyDir -Recurse -Filter *.py -File -EA SilentlyContinue | ForEach-Object {
+    $b = [System.IO.File]::ReadAllBytes($_.FullName)
+    if ($b.Length -ge 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF) { $bomPy += $_.Name }
+} }
+Check "py UTF-8 without BOM" ($bomPy.Count -eq 0)
+
+# 20) write-denial cause classifier (B8 true error classification) - pure logic + a real junction
+$wd20 = Join-Path ([System.IO.Path]::GetTempPath()) ("csm_deny_" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force $wd20 | Out-Null
+Check "deny not-found"   ((Get-CsmWriteDenialCause $null (Join-Path $wd20 'no_such_child')) -eq 'not-found')
+Check "deny permission"  ((Get-CsmWriteDenialCause (New-Object System.UnauthorizedAccessException 'Access is denied') $wd20) -eq 'permission-or-cfa')
+Check "deny process-lock" ((Get-CsmWriteDenialCause (New-Object System.IO.IOException 'The process cannot access the file because it is being used by another process') $wd20) -eq 'process-lock')
+$jnk = Join-Path $wd20 'realdir'; New-Item -ItemType Directory -Force $jnk | Out-Null
+$lnk = Join-Path $wd20 'link'; cmd /c mklink /J "$lnk" "$jnk" | Out-Null
+Check "deny reparse wins" ((Get-CsmWriteDenialCause (New-Object System.UnauthorizedAccessException 'denied') $lnk) -eq 'reparse-or-placeholder')
+Check "writable detail ok" ((Test-CsmWritableDetail $wd20).writable -and (Test-CsmWritableDetail $wd20).cause -eq 'ok')
+Remove-Item -Recurse -Force $wd20
+
 Write-Host ""
 if ($script:fail -eq 0) { Write-Host "ALL SMOKE TESTS PASSED" } else { Write-Host "$($script:fail) TEST(S) FAILED"; exit 1 }

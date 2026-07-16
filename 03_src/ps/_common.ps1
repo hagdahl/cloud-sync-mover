@@ -58,7 +58,12 @@ function Write-CsmLog {
     param([string]$Message, [string]$LogFile)
     $line = "{0}`t{1}" -f (Get-Date -Format s), $Message
     Write-Host $line
-    if ($LogFile) { try { Add-Content -LiteralPath $LogFile -Value $line -Encoding UTF8 } catch {} }
+    # The line is already on the host (stdout) above, so a log-file write failure loses no data - but
+    # per B8 it must not be SILENT: surface the cause on the host instead of swallowing it.
+    if ($LogFile) {
+        try { Add-Content -LiteralPath $LogFile -Value $line -Encoding UTF8 }
+        catch { Write-Host ("{0}`tWARN: log-file write failed ({1}): {2}" -f (Get-Date -Format s), $LogFile, $_.Exception.Message) }
+    }
 }
 
 function Write-CsmAtomic {
@@ -69,16 +74,52 @@ function Write-CsmAtomic {
     Move-Item -LiteralPath $tmp -Destination $Path -Force
 }
 
-function Test-CsmWritable {
-    # Writability preflight (A4): write+delete a probe file. Returns $true/$false.
-    param([string]$Dir)
+function Get-CsmWriteDenialCause {
+    # B8 (true error classification): map a write failure to a CONCRETE cause instead of a bare
+    # "not writable". Pure classifier over the caught exception + the directory's own attributes, so
+    # it is unit-testable. Returns one of: 'not-found', 'reparse-or-placeholder', 'process-lock',
+    # 'permission-or-cfa' (ACL or Defender Controlled-Folder-Access - indistinguishable without an
+    # admin event-log read, so reported together), 'unknown'. Never throws.
+    param($Exception, [string]$Dir)
     try {
-        if (-not (Test-Path -LiteralPath $Dir)) { return $false }
-        $probe = Join-Path $Dir (".csm_probe_{0}.tmp" -f ([guid]::NewGuid().ToString('N')))
+        if ($Dir -and -not (Test-Path -LiteralPath $Dir)) { return 'not-found' }
+        # A reparse point / cloud placeholder at the target changes write semantics (junction, FoD).
+        if ($Dir) {
+            try {
+                $attr = (New-Object System.IO.DirectoryInfo $Dir).Attributes
+                if (($attr -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { return 'reparse-or-placeholder' }
+            } catch { }
+        }
+        $type = if ($Exception -and $Exception.GetType) { $Exception.GetType().FullName } else { '' }
+        $msg  = "$($Exception.Message)"
+        if ($type -match 'DirectoryNotFound|FileNotFound') { return 'not-found' }
+        if ($type -match 'UnauthorizedAccess' -or $msg -match 'denied|Access is denied|UnauthorizedAccess') { return 'permission-or-cfa' }
+        if ($msg -match 'being used by another process|in use|sharing violation|locked') { return 'process-lock' }
+        if ($msg -match 'cloud|placeholder|reparse|offline') { return 'reparse-or-placeholder' }
+        return 'unknown'
+    } catch { return 'unknown' }
+}
+
+function Test-CsmWritableDetail {
+    # Writability preflight (A4) with B8 cause classification. Returns @{ writable=$bool; cause=$str }.
+    # cause is 'ok' on success, else a Get-CsmWriteDenialCause label.
+    param([string]$Dir)
+    if (-not (Test-Path -LiteralPath $Dir)) { return @{ writable = $false; cause = 'not-found' } }
+    $probe = Join-Path $Dir (".csm_probe_{0}.tmp" -f ([guid]::NewGuid().ToString('N')))
+    try {
         [System.IO.File]::WriteAllText($probe, "probe")
         Remove-Item -LiteralPath $probe -Force
-        return $true
-    } catch { return $false }
+        return @{ writable = $true; cause = 'ok' }
+    } catch {
+        return @{ writable = $false; cause = (Get-CsmWriteDenialCause $_.Exception $Dir) }
+    }
+}
+
+function Test-CsmWritable {
+    # Writability preflight (A4): write+delete a probe file. Returns $true/$false.
+    # Thin boolean wrapper over Test-CsmWritableDetail (kept for existing callers).
+    param([string]$Dir)
+    return (Test-CsmWritableDetail -Dir $Dir).writable
 }
 
 # ---------------------------------------------------------------------------
