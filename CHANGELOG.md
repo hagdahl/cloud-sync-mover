@@ -94,3 +94,9 @@ Compliance pass against the standard's current version (v0.61). No PART A violat
 - Files: `01_docs/ARCHITECTURE.md`, `00_admin/DECISIONS.md` (ADR-013), `03_src/ps/_common.ps1`, `03_src/ps/Test-MovePreflight.ps1`, `04_tests/validation/Test-Toolkit.ps1`, `README.md`, `CHANGELOG.md`.
 - Rollback: `git revert` this commit / reset to tag `v0.5.0`. Behavior of existing green paths is unchanged; the only functional addition is a richer (still fail-closed) preflight writability message.
 - Verification: full smoke suite green on Windows PowerShell 5.1 and 7 (adds encoding round-trip + denial-classifier tests incl. a real junction); `.ps1` ASCII-only + parse-clean; `.md`/`.py` no-BOM. The two audit items about tagging and `gc.auto 0` were confirmed already satisfied on the authoritative working copy (tag `v0.5.0` on origin; `gc.auto 0` set) - no change needed.
+
+## 2026-07-19 22:58 UTC - Field incident distilled: mirror upsync blocked by a locked staging queue
+Knowledge artifacts only - no code or behavior change. Distilled a live 2026-07-19 incident (Google Drive mirror: a ~36 GB, ~5 574-file undeletable `.tmp.driveupload` on one mount root silently blocked ALL mirror upsync for days) into a new dated section in `00_admin/LESSONS_LEARNED.md`, and filed five improvement proposals in new `00_admin/proposals/2026-07-19_upsync_block_proposals.md` (pre-classified per the standard's QA point 9; routed as issues #16/#17/#18 plus comments on open #5/#15).
+- Also repairs a header damaged by the incident-day file write: the `## 2026-07 - OneDrive Personal` section heading had lost its `## 2` prefix when the new section was inserted above it.
+- Rollback: `git revert` this commit; both files are additive knowledge records, no tool behavior involved.
+- Verification: PII check of both files (de-identified; only generic placeholders like `E:\<top-level-mirror-root>`); `.md` UTF-8 without BOM; heading structure restored (one `##` per dated entry).
