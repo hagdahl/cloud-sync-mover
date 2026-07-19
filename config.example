@@ -36,6 +36,12 @@ wal_warn_mb = 512
 stale_marker_patterns = *stale*;*.pending;*.crdownload
 # Process name whose CPU is sampled as a liveness signal.
 process_name = GoogleDriveFS
+# #16: staging-queue dir scanned AT THE ROOT of each mirror root (mount-side upsync-block
+# signal; single-level enumeration, content never read, summary redacted to ordinals).
+stage_dir_name = .tmp.driveupload
+# #16: additional top-level mirror roots on the same sync mount (';'-separated). Include a
+# backup root here too if it lives under the sync mount. source_root is always ordinal 0.
+extra_mirror_roots =
 
 [diagnose]
 # Seconds between the two liveness samples the diagnose phase takes (#15). Larger = more reliable

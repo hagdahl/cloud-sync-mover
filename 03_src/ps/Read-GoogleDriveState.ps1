@@ -1,4 +1,5 @@
-# Read-GoogleDriveState.ps1 - #8 + #15: read-only Google Drive mirror-state + startup-liveness signals.
+# Read-GoogleDriveState.ps1 - #8 + #15 + #16: read-only Google Drive mirror-state + startup-liveness
+# + sync-mount staging-queue signals.
 # Read-only: file stats only, never opens the provider DBs read-write, never mutates. Emits a redacted
 # signals object (no account ids / local paths / filenames in the summary). Provider-specific paths and
 # marker globs are CONFIGURABLE - defaults are best-effort and should be tuned against real logs.
@@ -44,6 +45,18 @@ if (Test-Path -LiteralPath $cacheRoot) {
     }
 }
 
+# #16: sync-mount staging-queue scan. Nothing under the cache is a proxy for a stuck
+# .tmp.driveupload ON THE MOUNT ITSELF, so the configured mirror roots are scanned directly
+# (single level, content never read; the summary identifies roots by ordinal only).
+$stageName = Get-CsmStageDirName $cfg
+$mountQueues = @()
+if ($stageName) {
+    $mroots = @(Get-CsmMirrorRoots $cfg)
+    if ($mroots.Count -gt 0) { $mountQueues = @(Get-CsmMountStageQueues -Roots $mroots -StageDirName $stageName) }
+}
+$queuesBlocked = @($mountQueues | Where-Object { $_.class -eq 'blocked' }).Count
+$queuesWarning = @($mountQueues | Where-Object { $_.class -eq 'warning' }).Count
+
 # #15: a large WAL means the cache is doing (or stuck mid-) heavy work - that is the "startup/scan"
 # phase. The classifier then splits it by PROGRESS: a large + GROWING WAL is HEALTHY (initializing),
 # while a large + STALLED WAL (no wal growth, no cpu, no log tick) is 'hung'. Defining $inStartup to
@@ -56,6 +69,8 @@ $signals = @{
     initializing      = ($liveness -eq 'initializing')
     stalled           = (($liveness -eq 'hung'))
     knownDangerMarker = ($stale -gt 0 -and (-not $inStartup))   # persistent stale markers, but not during a healthy index
+    stageQueueBlocked = ($queuesBlocked -gt 0)   # #16: stuck (non-empty + undeletable) mount staging queue
+    stageQueueWarning = ($queuesWarning -gt 0)   # #16: non-empty (deletable) mount staging queue
     verifiedHealthy   = $false
 }
 $out = [ordered]@{
@@ -68,6 +83,9 @@ $out = [ordered]@{
     log_ticked     = $logTicked
     stale_markers  = $stale
     stale_oldest_min = $staleOldestMin
+    mount_stage_queues   = $mountQueues      # #16: redacted (ordinals + counts, no paths)
+    stage_queues_blocked = $queuesBlocked
+    stage_queues_warning = $queuesWarning
     liveness       = $liveness
     signals        = $signals
     sample_seconds = $SampleSeconds

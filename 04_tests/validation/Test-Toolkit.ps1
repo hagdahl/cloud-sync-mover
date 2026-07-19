@@ -237,5 +237,68 @@ Check "deny reparse wins" ((Get-CsmWriteDenialCause (New-Object System.Unauthori
 Check "writable detail ok" ((Test-CsmWritableDetail $wd20).writable -and (Test-CsmWritableDetail $wd20).cause -eq 'ok')
 Remove-Item -Recurse -Force $wd20
 
+# 21) stage-queue classifier (#16) - pure logic
+Check "stq absent => none"             ((Get-CsmStageQueueClass -Present:$false) -eq 'none')
+Check "stq empty ok => info"           ((Get-CsmStageQueueClass -Present:$true -FileCount 0 -DeleteProbe 'ok') -eq 'info')
+Check "stq nonempty ok => warning"     ((Get-CsmStageQueueClass -Present:$true -FileCount 3 -DeleteProbe 'ok' -ExistingDeleteProbe 'ok') -eq 'warning')
+Check "stq probe denied => blocked"    ((Get-CsmStageQueueClass -Present:$true -FileCount 3 -DeleteProbe 'denied') -eq 'blocked')
+Check "stq existing denied => blocked" ((Get-CsmStageQueueClass -Present:$true -FileCount 3 -DeleteProbe 'ok' -ExistingDeleteProbe 'denied') -eq 'blocked')
+Check "stq locked stays warning"       ((Get-CsmStageQueueClass -Present:$true -FileCount 3 -DeleteProbe 'ok' -ExistingDeleteProbe 'locked') -eq 'warning')
+Check "stq empty denied => warning"    ((Get-CsmStageQueueClass -Present:$true -FileCount 0 -DeleteProbe 'denied') -eq 'warning')
+
+# 22) mount stage-queue scan (#16) over fixtures: absent / empty / non-empty deletable /
+#     locked-deletable (deny ACL on an EXISTING file) / ReadOnly-attributed root. The deny
+#     fixtures use the Everyone SID (*S-1-1-0) so they are locale-independent; every deny is
+#     removed again before cleanup.
+$sq = Join-Path ([System.IO.Path]::GetTempPath()) ("csm_sq_" + [guid]::NewGuid().ToString('N'))
+$rAbsent = Join-Path $sq 'r0'; $rEmpty = Join-Path $sq 'r1'; $rWarn = Join-Path $sq 'r2'; $rBlock = Join-Path $sq 'r3'
+New-Item -ItemType Directory -Force $rAbsent, $rEmpty, $rWarn, $rBlock | Out-Null
+New-Item -ItemType Directory -Force (Join-Path $rEmpty '.tmp.driveupload'), (Join-Path $rWarn '.tmp.driveupload'), (Join-Path $rBlock '.tmp.driveupload') | Out-Null
+'w' | Out-File (Join-Path $rWarn '.tmp.driveupload\w1.bin')
+$lockFile = Join-Path $rBlock '.tmp.driveupload\old.bin'
+'b' | Out-File $lockFile
+attrib +r "$rBlock" 2>$null   # a ReadOnly-attributed root must still scan (field case)
+icacls "$lockFile" /deny "*S-1-1-0:(DE)" | Out-Null
+$blkDir22 = Join-Path $rBlock '.tmp.driveupload'
+icacls "$blkDir22" /deny "*S-1-1-0:(DC)" | Out-Null   # parent FILE_DELETE_CHILD would otherwise override the file deny
+$sqr = @(Get-CsmMountStageQueues -Roots @($rAbsent, $rEmpty, $rWarn, $rBlock) -StageDirName '.tmp.driveupload')
+Check "sq scan 4 entries"       ($sqr.Count -eq 4)
+Check "sq absent none"          ($sqr[0].class -eq 'none' -and $sqr[0].present -eq $false)
+Check "sq empty info"           ($sqr[1].class -eq 'info' -and $sqr[1].delete_probe -eq 'ok')
+Check "sq nonempty warning"     ($sqr[2].class -eq 'warning' -and $sqr[2].file_count -eq 1 -and $sqr[2].oldest_utc)
+Check "sq deny-ACL blocked"     ($sqr[3].class -eq 'blocked' -and $sqr[3].existing_delete_probe -eq 'denied')
+Check "sq redacted (no paths)"  (-not (($sqr | ConvertTo-Json -Compress).Contains($sq)))
+Check "sq delete-access denied" ((Test-CsmDeleteAccess $lockFile) -eq 'denied')
+$w1 = Join-Path $rWarn '.tmp.driveupload\w1.bin'
+$fs22 = [System.IO.File]::Open($w1, 'Open', 'Read', 'None')
+Check "sq delete-access locked" ((Test-CsmDeleteAccess $w1) -eq 'locked')
+$fs22.Close()
+Check "sq delete-access ok"     ((Test-CsmDeleteAccess $w1) -eq 'ok')
+icacls "$blkDir22" /remove:d "*S-1-1-0" | Out-Null
+icacls "$lockFile" /remove:d "*S-1-1-0" | Out-Null
+attrib -r "$rBlock" 2>$null
+Remove-Item -Recurse -Force $sq
+
+# 23) Read-GoogleDriveState (#16): a blocked mount queue must surface in the signals and
+#     aggregate to 'blocked' even when the cache itself looks quiet (small WAL, no stale
+#     markers) - the exact shape of the 2026-07-19 field incident.
+$g23 = Join-Path ([System.IO.Path]::GetTempPath()) ("csm_g23_" + [guid]::NewGuid().ToString('N'))
+$c23 = Join-Path $g23 'cache'; $s23 = Join-Path $g23 'mount\root0'
+New-Item -ItemType Directory -Force $c23, (Join-Path $s23 '.tmp.driveupload') | Out-Null
+$b23 = Join-Path $s23 '.tmp.driveupload\stuck.bin'
+'x' | Out-File $b23
+icacls "$b23" /deny "*S-1-1-0:(DE)" | Out-Null
+$d23 = Join-Path $s23 '.tmp.driveupload'
+icacls "$d23" /deny "*S-1-1-0:(DC)" | Out-Null
+$p23 = Join-Path $g23 'cfg.ini'
+Set-Content $p23 "[paths]`nsource_root = $s23`nwork_dir = $g23`n[provider]`nname = google-drive`n[google_drive]`ncache_root = $c23`nprocess_name = CsmTestNoSuchProc_$([guid]::NewGuid().ToString('N'))`n[diagnose]`nsample_seconds = 1"
+$g23o = & (Join-Path $ps 'Read-GoogleDriveState.ps1') -Config $p23 -AsObject
+Check "gd mount queue scanned"     (@($g23o.mount_stage_queues).Count -eq 1)
+Check "gd stage blocked signal"    ($g23o.signals['stageQueueBlocked'] -eq $true -and $g23o.stage_queues_blocked -eq 1)
+Check "gd stage => blocked health" ((Get-CsmDiagnoseHealth $g23o.signals) -eq 'blocked')
+icacls "$d23" /remove:d "*S-1-1-0" | Out-Null
+icacls "$b23" /remove:d "*S-1-1-0" | Out-Null
+Remove-Item -Recurse -Force $g23
+
 Write-Host ""
 if ($script:fail -eq 0) { Write-Host "ALL SMOKE TESTS PASSED" } else { Write-Host "$($script:fail) TEST(S) FAILED"; exit 1 }

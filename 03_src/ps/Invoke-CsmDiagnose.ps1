@@ -21,6 +21,9 @@ if ($prov -eq 'google-drive') {
     $summary['wal_max_mb']    = $gd.wal_max_mb
     $summary['wal_large']     = $gd.wal_large
     $summary['stale_markers'] = $gd.stale_markers
+    $summary['stage_queues_blocked'] = $gd.stage_queues_blocked   # #16
+    $summary['stage_queues_warning'] = $gd.stage_queues_warning   # #16
+    $summary['mount_stage_queues']   = $gd.mount_stage_queues     # #16: ordinals + counts only
 }
 elseif ($prov -like 'onedrive-*') {
     # OneDrive: snapshot the state DBs (read-only) and derive signals from the report. Throttling is

@@ -47,6 +47,7 @@ Or phase by phase:
 7. **Diagnose — provider health (safe):**
    `powershell -File 03_src\ps\Invoke-CloudSyncMove.ps1 -Config .\config.local -Phase diagnose`
    Provider-aware (OneDrive **and** Google Drive). Emits a single redacted health verdict — `healthy` / `initializing` / `warning` / `blocked` / `unknown` — into `diagnose_<ts>_done.json`. "No known danger marker" is `unknown`, never `healthy`. A large + *growing* Google Drive cache during startup is `initializing` (healthy), not a hang. Throttling is not treated as a danger. Preflight reads this result (see step 3).
+   Since #16 the Google Drive path also scans **each configured mirror root** (`source_root` + `[google_drive] extra_mirror_roots`) for a stuck staging queue (`.tmp.driveupload`): non-empty **and** undeletable → the verdict is `blocked` even when the cache looks quiet. See "Stuck staging queue" below for the cleanup recipe.
 
 8. **Probe — prove the sync actually round-trips (opt-in write):**
    Dry-run first (writes nothing, just checks readiness):

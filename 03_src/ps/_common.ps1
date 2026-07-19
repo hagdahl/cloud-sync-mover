@@ -400,12 +400,158 @@ function Get-CsmLivenessVerdict {
 function Get-CsmDiagnoseHealth {
     # #5: aggregate provider signals into a single health outcome. Pure logic.
     # $Signals keys (all optional bools): initializing, poisonMarker, stalled, errorsIncreasing,
-    # retryLoop, accessDenied, knownDangerMarker, verifiedHealthy.
+    # retryLoop, accessDenied, knownDangerMarker, verifiedHealthy, and (#16) stageQueueBlocked,
+    # stageQueueWarning. stageQueueBlocked is checked BEFORE initializing: an ACL-poisoned
+    # staging queue on the mount does not resolve by waiting out a startup scan.
     param([hashtable]$Signals)
     if (-not $Signals) { return 'unknown' }
+    if ($Signals['stageQueueBlocked']) { return 'blocked' }
     if ($Signals['initializing']) { return 'initializing' }
     if ($Signals['poisonMarker'] -or $Signals['stalled'] -or ($Signals['errorsIncreasing'] -and $Signals['retryLoop'])) { return 'blocked' }
-    if ($Signals['accessDenied'] -or $Signals['errorsIncreasing'] -or $Signals['retryLoop'] -or $Signals['knownDangerMarker']) { return 'warning' }
+    if ($Signals['accessDenied'] -or $Signals['errorsIncreasing'] -or $Signals['retryLoop'] -or $Signals['knownDangerMarker'] -or $Signals['stageQueueWarning']) { return 'warning' }
     if ($Signals['verifiedHealthy']) { return 'healthy' }
     return 'unknown'   # "no known danger markers" is NOT "verified healthy" (#5)
+}
+
+# ---------------------------------------------------------------------------
+# v0.6.0-wip additions: sync-mount staging-queue scan (#16). The client cache
+# says nothing about a stuck staging dir ON THE MOUNT ITSELF - the field case
+# (2026-07-19 lesson) where an undeletable .tmp.driveupload on one mirror root
+# blocked ALL mirror upsync while every cache-side signal stayed quiet.
+# ---------------------------------------------------------------------------
+
+function Get-CsmStageDirName {
+    # #16: name of the provider's staging-queue dir AT THE ROOT of each mirror root.
+    # google-drive: .tmp.driveupload (override: [google_drive] stage_dir_name).
+    # Other providers have no known in-mount staging queue -> $null (scan skipped);
+    # add a per-provider key here when one is identified.
+    param($Config)
+    $prov = "$(Get-CsmValue $Config 'provider' 'name' 'unknown')".ToLower()
+    if ($prov -eq 'google-drive') {
+        return (Get-CsmValue $Config 'google_drive' 'stage_dir_name' '.tmp.driveupload')
+    }
+    return $null
+}
+
+function Get-CsmMirrorRoots {
+    # #16: ordered mirror roots to scan. Ordinal 0 = [paths] source_root; ordinals 1..N =
+    # [google_drive] extra_mirror_roots (';'-separated, config order). A backup root that
+    # lives under the sync mount belongs in extra_mirror_roots too. The ordinal IS the
+    # redaction: summaries identify roots by position, never by path.
+    param($Config)
+    $roots = New-Object System.Collections.Generic.List[string]
+    $src = Get-CsmValue $Config 'paths' 'source_root'
+    if ($src) { [void]$roots.Add("$src".TrimEnd('\')) }
+    $extra = Get-CsmValue $Config 'google_drive' 'extra_mirror_roots'
+    if ($extra) {
+        foreach ($r in ("$extra" -split ';')) { $t = $r.Trim(); if ($t) { [void]$roots.Add($t.TrimEnd('\')) } }
+    }
+    return $roots.ToArray()   # ToArray, not @(): see Get-CsmMountStageQueues
+}
+
+function Test-CsmDeleteAccess {
+    # #16: NON-destructive deletability check of an EXISTING file: open it with DELETE
+    # desired access (no read, no write, no change), close the handle. 'ok' = the ACL grants
+    # delete; 'denied' = ACCESS_DENIED (the field signature: files carried over from older
+    # deployments whose ACL/owner denies delete, while NEW files still create+delete fine);
+    # 'locked' = sharing violation (an open handle without FILE_SHARE_DELETE - can be a
+    # legitimately active upload); 'error:<n>' = other Win32 error; 'unavailable' = the
+    # native probe cannot run here (non-Windows / compile failure). Never throws.
+    param([string]$Path)
+    if (-not ('CsmNative.Probe' -as [type])) {
+        try {
+            Add-Type -ErrorAction Stop -TypeDefinition 'using System; using System.Runtime.InteropServices; namespace CsmNative { public static class Probe { [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] public static extern IntPtr CreateFileW(string name, uint access, uint share, IntPtr sec, uint disp, uint flags, IntPtr template); [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool CloseHandle(IntPtr h); } }'
+        } catch { return 'unavailable' }
+    }
+    try {
+        $h = [CsmNative.Probe]::CreateFileW("\\?\$Path", [uint32]0x00010000, [uint32]7, [IntPtr]::Zero, [uint32]3, [uint32]0, [IntPtr]::Zero)
+        $err = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        if ($h.ToInt64() -ne -1) { [void][CsmNative.Probe]::CloseHandle($h); return 'ok' }
+        if ($err -eq 5)  { return 'denied' }
+        if ($err -eq 32) { return 'locked' }
+        return "error:$err"
+    } catch { return 'unavailable' }
+}
+
+function Get-CsmStageQueueClass {
+    # #16: pure classifier for one scanned staging-queue entry.
+    #   'none'    - staging dir absent (or root missing)
+    #   'info'    - present, empty, deletable
+    #   'warning' - present + non-empty + deletable, OR empty but probe-denied, OR existing
+    #               files only 'locked' (an active upload may legitimately hold its files)
+    #   'blocked' - present + non-empty + a deletability probe says DENIED (either the fresh
+    #               create/delete probe or the existing-file DELETE-access sample)
+    param([bool]$Present, [long]$FileCount = 0, [string]$DeleteProbe = 'missing', [string]$ExistingDeleteProbe = 'n/a')
+    if (-not $Present) { return 'none' }
+    $denied = ($DeleteProbe -eq 'denied') -or ($ExistingDeleteProbe -eq 'denied')
+    if ($FileCount -gt 0) { if ($denied) { return 'blocked' } else { return 'warning' } }
+    if ($denied) { return 'warning' }
+    return 'info'
+}
+
+function Get-CsmMountStageQueues {
+    # #16: scan each mirror root for the staging-queue dir DIRECTLY under it. Single-level
+    # enumeration only (never recurses into the queue), never reads file content. REDACTED
+    # by construction: entries carry ordinals, counts and probe outcomes - no paths, no names.
+    # Probes: (a) create+delete of a fresh uniquely-named file (never touches pre-existing
+    # files); (b) DELETE-access handle-open on up to $SampleExisting of the OLDEST existing
+    # files - non-destructive, and the only probe that catches the field case (carried-over
+    # files deny delete while new files create/delete fine, so (a) alone would read 'ok').
+    param([string[]]$Roots, [string]$StageDirName, [int]$SampleExisting = 3)
+    $out = New-Object System.Collections.Generic.List[object]
+    for ($i = 0; $i -lt $Roots.Count; $i++) {
+        $root = $Roots[$i]
+        $e = [ordered]@{
+            root_ordinal = $i; root_present = $false; present = $false
+            size_bytes = [long]0; file_count = 0; subdir_count = 0
+            oldest_utc = $null; newest_utc = $null; enum_error = $false
+            delete_probe = 'missing'; existing_delete_probe = 'n/a'; class = 'none'
+        }
+        if ($root -and (Test-Path -LiteralPath $root)) {
+            $e.root_present = $true
+            $sd = Join-Path $root $StageDirName
+            if (Test-Path -LiteralPath $sd) {
+                $e.present = $true
+                $files = New-Object System.Collections.Generic.List[object]
+                try { foreach ($f in [System.IO.Directory]::EnumerateFiles($sd)) { $files.Add([System.IO.FileInfo]::new($f)) } }
+                catch { $e.enum_error = $true }
+                try { $e.subdir_count = @([System.IO.Directory]::EnumerateDirectories($sd)).Count } catch { }
+                $e.file_count = $files.Count
+                foreach ($fi in $files) { $e.size_bytes += [long]$fi.Length }
+                $sorted = @()
+                if ($files.Count) {
+                    $sorted = @($files | Sort-Object LastWriteTimeUtc)
+                    $e.oldest_utc = $sorted[0].LastWriteTimeUtc.ToString('s')
+                    $e.newest_utc = $sorted[$sorted.Count - 1].LastWriteTimeUtc.ToString('s')
+                }
+                # (a) fresh-file create+delete probe (never touches pre-existing files).
+                $probe = Join-Path $sd (".csm_stageprobe_{0}.tmp" -f ([guid]::NewGuid().ToString('N')))
+                try {
+                    [System.IO.File]::WriteAllText($probe, "probe")
+                    Remove-Item -LiteralPath $probe -Force
+                    $e.delete_probe = 'ok'
+                } catch {
+                    $cause = Get-CsmWriteDenialCause $_.Exception $sd
+                    if ($cause -eq 'permission-or-cfa') { $e.delete_probe = 'denied' } else { $e.delete_probe = "error:$cause" }
+                    # best-effort cleanup if the file was created but could not be deleted
+                    try { if (Test-Path -LiteralPath $probe) { Remove-Item -LiteralPath $probe -Force -EA SilentlyContinue } } catch { }
+                }
+                # (b) existing-file DELETE-access sample, oldest first (non-destructive).
+                if ($sorted.Count -gt 0 -and $SampleExisting -gt 0) {
+                    $verdicts = @()
+                    foreach ($fi in @($sorted | Select-Object -First $SampleExisting)) { $verdicts += (Test-CsmDeleteAccess $fi.FullName) }
+                    if     ($verdicts -contains 'denied') { $e.existing_delete_probe = 'denied' }
+                    elseif ($verdicts -contains 'locked') { $e.existing_delete_probe = 'locked' }
+                    elseif (@($verdicts | Where-Object { $_ -like 'error:*' }).Count -gt 0) { $e.existing_delete_probe = [string]@($verdicts | Where-Object { $_ -like 'error:*' })[0] }
+                    elseif ($verdicts -contains 'unavailable') { $e.existing_delete_probe = 'unavailable' }
+                    else { $e.existing_delete_probe = 'ok' }
+                }
+            }
+        }
+        $e.class = Get-CsmStageQueueClass -Present $e.present -FileCount $e.file_count -DeleteProbe $e.delete_probe -ExistingDeleteProbe $e.existing_delete_probe
+        $out.Add([pscustomobject]$e)
+    }
+    # ToArray, not @($out): @() on a List[object] holding PSCustomObjects throws
+    # 'Argument types do not match' on both PS 5.1 and 7.
+    return $out.ToArray()
 }

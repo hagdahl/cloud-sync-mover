@@ -52,7 +52,19 @@ Common header (`success` = `health == 'healthy'`) plus a redacted verdict — co
 | Field | Type | Note |
 |---|---|---|
 | health | string | `healthy` \| `initializing` \| `warning` \| `blocked` \| `unknown` (fail-closed: "no danger marker" is `unknown`, never `healthy`) |
-| summary | object | provider-specific redacted counts — Google Drive: `liveness`, `wal_max_mb`, `wal_large`, `stale_markers`; OneDrive: `accounts`, `conflicts` |
+| summary | object | provider-specific redacted counts — Google Drive: `liveness`, `wal_max_mb`, `wal_large`, `stale_markers`, and since #16 `stage_queues_blocked` / `stage_queues_warning` / `mount_stage_queues[]`; OneDrive: `accounts`, `conflicts` |
+
+`mount_stage_queues[]` (#16) — one entry per configured mirror root (ordinal 0 = `source_root`, 1..N = `extra_mirror_roots` in config order; **no paths anywhere**):
+
+| Field | Type | Note |
+|---|---|---|
+| root_ordinal | integer | position in the configured root list — the redaction-safe identity |
+| root_present / present | bool | root exists / staging dir exists at its top level |
+| size_bytes / file_count / subdir_count | numbers | single-level enumeration of the staging dir (never recursed, content never read) |
+| oldest_utc / newest_utc | ISO-8601 | LastWrite range of the queue's files (carried-over decades-old files are the field signature) |
+| delete_probe | string | fresh-file create+delete probe: `ok` \| `denied` \| `missing` \| `error:<cause>` |
+| existing_delete_probe | string | non-destructive DELETE-access open on up to 3 oldest files: `ok` \| `denied` \| `locked` \| `unavailable` \| `error:<n>` \| `n/a` |
+| class | string | `none` \| `info` \| `warning` \| `blocked` (non-empty + a denied probe) |
 
 ## probe_<ts>_done.json  (phase probe, #9 — v0.5.0)
 Round-trip proof. `mode` is `dry-run` or `execute`.
