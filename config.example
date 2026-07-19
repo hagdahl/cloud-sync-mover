@@ -51,6 +51,26 @@ sample_seconds = 5
 # (transient states like 'initializing' expire).
 max_age_minutes = 30
 
+[diagnose_delivery]
+# #18 (ADR-014): the diagnose phase ALWAYS writes its local artifact to work_dir. When enabled
+# below it ALSO uploads that artifact directly via the provider's REST API - bypassing the
+# local sync client, which may be the very thing being diagnosed. Opt-in per A1: default false;
+# enabling it is the recorded operator decision that authorizes the (redacted) upload per run.
+provider_upload_enabled = false
+# google-drive (implemented: Drive files.create, multipart) | onedrive (not yet implemented)
+provider = google-drive
+# Provider FOLDER ID to upload into (an ID, not a path) - e.g. a dedicated "diagnostics inbox"
+# folder; copy the ID from the folder's URL in the provider's web UI.
+folder_id =
+# Credentials per B13/A2: the NAME of an environment variable holding an OAuth access token
+# with file-create scope (Drive: drive.file is sufficient and least-privilege). NEVER put the
+# token itself in this file.
+credentials_env =
+# Write a small local receipt (diagnose_<ts>_delivery.json) with the delivery outcome.
+write_receipt = true
+# Test seam: override the API base URL (points the upload at a mock). Empty = real endpoint.
+endpoint_base =
+
 [probe]
 # Round-trip proof the provider is ACTUALLY syncing (#9). All keys optional; the probe is dry-run
 # unless run with -Execute. probe_dir must be a dedicated folder INSIDE the synced tree (never the

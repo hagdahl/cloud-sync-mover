@@ -63,7 +63,7 @@ The **publishability level** of this repo (level 2/3 — publishable generic kno
 - **Dry-run default** (A1): destructive steps require `-Execute`.
 - **Time-gated deletion** (A3): the source is kept for `min_stable_days` days.
 - **Read-only pass in phase 0** (B11 data minimization): the inventory never touches file content.
-- **No cloud sharing** (A2): only the provider's own quota/metadata endpoint is called; no file content is sent.
+- **No cloud sharing** (A2): only the provider's own quota/metadata endpoint is called; no file content is sent. One enumerated opt-in exception (#18, ADR-014, default off): the diagnose phase can upload its own redacted artifact via the provider REST API — token via a named env var only (B13/A2), soft-fail (B8), and never anything beyond that single artifact.
 - **Idempotency** (A6): every script can be re-run; atomic write (temp + `Move-Item -Force`); completion markers (`*_done.json`).
 
 ## Execution vs target environment (B14)

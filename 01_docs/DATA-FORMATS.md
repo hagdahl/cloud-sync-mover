@@ -66,6 +66,17 @@ Common header (`success` = `health == 'healthy'`) plus a redacted verdict — co
 | existing_delete_probe | string | non-destructive DELETE-access open on up to 3 oldest files: `ok` \| `denied` \| `locked` \| `unavailable` \| `error:<n>` \| `n/a` |
 | class | string | `none` \| `info` \| `warning` \| `blocked` (non-empty + a denied probe) |
 
+Since #18, when `[diagnose_delivery] provider_upload_enabled = true`, the artifact additionally records the delivery outcome (appended after the upload attempt — the uploaded copy is the artifact as first written, without these fields):
+
+| Field | Type | Note |
+|---|---|---|
+| delivered_via_api | bool | true only on a confirmed provider-API upload |
+| delivered_via_api_url | string \| null | redaction-safe URL (file-id based), never a local path |
+| delivered_via_api_error | string \| null | classified soft-failure — config reason (`missing-folder-id`, `missing-credentials-env`, `credentials-unresolvable`, `provider-not-implemented`) or transport class (`http-401-unauthorized`, `http-403-forbidden`, `http-404-not-found`, `http-NNN`, `network`, `error:<type>`) |
+
+## diagnose_<ts>_delivery.json  (#18 — optional local receipt)
+`schema: csm.delivery-receipt/1` — `artifact` (leaf name), `provider`, `delivered_via_api`, `delivered_via_api_url`, `delivered_via_api_error`, `finishedUtc`. Written when `[diagnose_delivery] write_receipt = true`.
+
 ## probe_<ts>_done.json  (phase probe, #9 — v0.5.0)
 Round-trip proof. `mode` is `dry-run` or `execute`.
 

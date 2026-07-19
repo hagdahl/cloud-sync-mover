@@ -20,7 +20,7 @@ The project is distilled from two real migrations (Google Drive and OneDrive Per
 | Tool output (inventory CSV, MD5 CSV, state snapshot) | `work_dir` (local disk) | Contains personal paths | **No** — generated locally, `.gitignore`d |
 | Config with actual paths | `config.local` | Environment-specific | **No** — `.gitignore`d; only `config.example` is checked in |
 
-The tools **never read file content** during the inventory phase (attributes only), send **no data to cloud APIs** beyond the provider's own quota/metadata endpoint, and write all artifacts to a local `work_dir` outside the synced folder.
+The tools **never read file content** during the inventory phase (attributes only), send **no data to cloud APIs** beyond the provider's own quota/metadata endpoint, and write all artifacts to a local `work_dir` outside the synced folder. One deliberate, **opt-in** exception (#18, default off, ADR-014): the diagnose phase can upload its own *redacted* diagnostic artifact (counts + health only — no paths, filenames, or account ids) via the provider's REST API, so the report reaches the operator even when the local sync client is the broken part.
 
 ## Supported services and tested clients
 

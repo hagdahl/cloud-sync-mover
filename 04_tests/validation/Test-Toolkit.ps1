@@ -338,5 +338,104 @@ icacls "$d24" /remove:d "*S-1-1-0" | Out-Null
 icacls "$b24" /remove:d "*S-1-1-0" | Out-Null
 Remove-Item -Recurse -Force $p24
 
+# 25) delivery plan resolution (#18) - pure logic; the plan never carries a token value
+$t25 = [System.IO.Path]::GetTempFileName()
+Set-Content $t25 "[provider]`nname = google-drive"
+Check "dlv disabled by default"    (((Resolve-CsmDeliveryPlan (Get-CsmConfig -Path $t25)).enabled) -eq $false)
+Set-Content $t25 "[diagnose_delivery]`nprovider_upload_enabled = true`nprovider = onedrive"
+Check "dlv provider not impl"      (((Resolve-CsmDeliveryPlan (Get-CsmConfig -Path $t25)).reason) -eq 'provider-not-implemented')
+Set-Content $t25 "[diagnose_delivery]`nprovider_upload_enabled = true`nprovider = google-drive"
+Check "dlv missing folder id"      (((Resolve-CsmDeliveryPlan (Get-CsmConfig -Path $t25)).reason) -eq 'missing-folder-id')
+Set-Content $t25 "[diagnose_delivery]`nprovider_upload_enabled = true`nprovider = google-drive`nfolder_id = F1"
+Check "dlv missing creds env"      (((Resolve-CsmDeliveryPlan (Get-CsmConfig -Path $t25)).reason) -eq 'missing-credentials-env')
+Set-Content $t25 "[diagnose_delivery]`nprovider_upload_enabled = true`nprovider = google-drive`nfolder_id = F1`ncredentials_env = CSM_T25_NOSUCHVAR"
+Check "dlv creds unresolvable"     (((Resolve-CsmDeliveryPlan (Get-CsmConfig -Path $t25)).reason) -eq 'credentials-unresolvable')
+$env:CSM_T25_TOK = 'dummy-token-value'
+Set-Content $t25 "[diagnose_delivery]`nprovider_upload_enabled = true`nprovider = google-drive`nfolder_id = F1`ncredentials_env = CSM_T25_TOK"
+$plan25 = Resolve-CsmDeliveryPlan (Get-CsmConfig -Path $t25)
+Check "dlv ready when resolvable"  ($plan25.ready -eq $true -and $plan25.reason -eq 'ok')
+Check "dlv plan carries no token"  (-not (($plan25 | ConvertTo-Json -Compress).Contains('dummy-token-value')))
+Remove-Item Env:\CSM_T25_TOK
+Remove-Item $t25
+Check "dlv error class 401"        ((Get-CsmDeliveryErrorClass ([System.Exception]::new('The remote server returned an error: (401) Unauthorized.'))) -eq 'http-401-unauthorized')
+Check "dlv error class network"    ((Get-CsmDeliveryErrorClass ([System.Exception]::new('Unable to connect to the remote server'))) -eq 'network')
+
+# 26) delivery soft-fail (#18): disabled => no delivery fields, no receipt; enabled + dead
+#     endpoint => classified 'network' soft failure, diagnostic itself still completes.
+function New-T26Cfg([string]$base, [string]$extra) {
+    $wd = Join-Path $base ([guid]::NewGuid().ToString('N')); New-Item -ItemType Directory -Force $wd | Out-Null
+    $cache = Join-Path $wd 'cache'; New-Item -ItemType Directory -Force $cache | Out-Null
+    $f = Join-Path $wd 'cfg.ini'
+    Set-Content $f "[paths]`nwork_dir = $wd`n[provider]`nname = google-drive`n[google_drive]`ncache_root = $cache`nprocess_name = CsmTestNoSuchProc_$([guid]::NewGuid().ToString('N'))`n[diagnose]`nsample_seconds = 1`n$extra"
+    return @{ wd = $wd; cfg = $f }
+}
+$t26base = Join-Path ([System.IO.Path]::GetTempPath()) ("csm_t26_" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force $t26base | Out-Null
+$c26a = New-T26Cfg $t26base ''
+& (Join-Path $ps 'Invoke-CsmDiagnose.ps1') -Config $c26a.cfg | Out-Null
+$a26a = Get-CsmLatestArtifact $c26a.wd 'diagnose'
+Check "dlv off: no delivery fields" (-not (@($a26a.PSObject.Properties.Name) -contains 'delivered_via_api'))
+Check "dlv off: no receipt"         (@(Get-ChildItem (Join-Path $c26a.wd 'diagnose_*_delivery.json') -EA SilentlyContinue).Count -eq 0)
+$env:CSM_T26_TOK = 'dummy'
+$c26b = New-T26Cfg $t26base "[diagnose_delivery]`nprovider_upload_enabled = true`nprovider = google-drive`nfolder_id = F1`ncredentials_env = CSM_T26_TOK`nendpoint_base = http://127.0.0.1:1"
+& (Join-Path $ps 'Invoke-CsmDiagnose.ps1') -Config $c26b.cfg | Out-Null
+$a26b = Get-CsmLatestArtifact $c26b.wd 'diagnose'
+Check "dlv soft-fail classified"    ($a26b.delivered_via_api -eq $false -and $a26b.delivered_via_api_error -eq 'network')
+Check "dlv soft-fail not fatal"     ($null -ne $a26b.health)
+Check "dlv soft-fail receipt"       (@(Get-ChildItem (Join-Path $c26b.wd 'diagnose_*_delivery.json') -EA SilentlyContinue).Count -eq 1)
+Remove-Item Env:\CSM_T26_TOK
+
+# 27) delivery happy path (#18) against a local TCP mock of the provider endpoint (no real
+#     cloud is touched; proves the multipart upload + URL capture end to end).
+$port27 = Get-Random -Minimum 20000 -Maximum 45000
+$job27 = Start-Job -ScriptBlock {
+    param($port)
+    $l = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $port)
+    $l.Start()
+    Write-Output "READY"
+    $c = $l.AcceptTcpClient()
+    $st = $c.GetStream()
+    $buf = New-Object byte[] 65536
+    $got = New-Object System.Text.StringBuilder
+    $deadline = [DateTime]::UtcNow.AddSeconds(8)
+    $contentLen = -1; $bodyStart = -1
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if ($c.Available -gt 0) {
+            $n = $st.Read($buf, 0, $buf.Length)
+            if ($n -le 0) { break }
+            [void]$got.Append([System.Text.Encoding]::UTF8.GetString($buf, 0, $n))
+            $s = $got.ToString()
+            if ($bodyStart -lt 0) {
+                $ix = $s.IndexOf("`r`n`r`n")
+                if ($ix -ge 0) {
+                    $bodyStart = $ix + 4
+                    if ($s -match '(?im)^Content-Length:\s*(\d+)') { $contentLen = [int]$Matches[1] }
+                }
+            }
+            if ($bodyStart -ge 0 -and $contentLen -ge 0 -and ($got.Length - $bodyStart) -ge $contentLen) { break }
+        } else { Start-Sleep -Milliseconds 50 }
+    }
+    $json = '{"id":"mock123","name":"x.json","webViewLink":"https://drive.google.com/file/d/mock123/view"}'
+    $resp = "HTTP/1.1 200 OK`r`nContent-Type: application/json`r`nContent-Length: $($json.Length)`r`nConnection: close`r`n`r`n$json"
+    $rb = [System.Text.Encoding]::UTF8.GetBytes($resp)
+    $st.Write($rb, 0, $rb.Length); $st.Flush()
+    Start-Sleep -Milliseconds 300
+    $c.Close(); $l.Stop()
+} -ArgumentList $port27
+$ready27 = $false
+for ($w = 0; $w -lt 50 -and -not $ready27; $w++) {
+    if (@(Receive-Job $job27 -Keep) -contains 'READY') { $ready27 = $true } else { Start-Sleep -Milliseconds 100 }
+}
+Check "dlv mock listener ready" $ready27
+$env:CSM_T27_TOK = 'dummy'
+$c27 = New-T26Cfg $t26base "[diagnose_delivery]`nprovider_upload_enabled = true`nprovider = google-drive`nfolder_id = FMOCK`ncredentials_env = CSM_T27_TOK`nendpoint_base = http://127.0.0.1:$port27"
+& (Join-Path $ps 'Invoke-CsmDiagnose.ps1') -Config $c27.cfg | Out-Null
+$a27 = Get-CsmLatestArtifact $c27.wd 'diagnose'
+Check "dlv happy delivered"    ($a27.delivered_via_api -eq $true)
+Check "dlv happy url captured" ("$($a27.delivered_via_api_url)".Contains('mock123'))
+Remove-Item Env:\CSM_T27_TOK
+Wait-Job $job27 -Timeout 10 | Out-Null; Remove-Job $job27 -Force -EA SilentlyContinue
+Remove-Item -Recurse -Force $t26base
+
 Write-Host ""
 if ($script:fail -eq 0) { Write-Host "ALL SMOKE TESTS PASSED" } else { Write-Host "$($script:fail) TEST(S) FAILED"; exit 1 }

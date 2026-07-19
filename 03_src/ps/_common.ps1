@@ -555,3 +555,83 @@ function Get-CsmMountStageQueues {
     # 'Argument types do not match' on both PS 5.1 and 7.
     return $out.ToArray()
 }
+# ---------------------------------------------------------------------------
+# v0.6.0-wip additions: diagnose-artifact delivery past a broken sync client
+# (#18, ADR-014). Opt-in and config-gated; credentials only as the NAME of an
+# env var (A2/B13); soft-fail with a classified outcome (B8).
+# ---------------------------------------------------------------------------
+
+function Resolve-CsmDeliveryPlan {
+    # #18: pure resolution of [diagnose_delivery] into an actionable plan. NEVER returns a
+    # token value - only whether one is resolvable and from which env var name.
+    param($Config)
+    $enabled = ("$(Get-CsmValue $Config 'diagnose_delivery' 'provider_upload_enabled' 'false')".ToLower() -eq 'true')
+    $plan = [ordered]@{ enabled = $enabled; provider = ''; folder_id = ''; credentials_env = ''; endpoint_base = ''; write_receipt = $true; ready = $false; reason = 'disabled' }
+    if (-not $enabled) { return $plan }
+    $plan.provider        = "$(Get-CsmValue $Config 'diagnose_delivery' 'provider' 'google-drive')".ToLower()
+    $plan.folder_id       = "$(Get-CsmValue $Config 'diagnose_delivery' 'folder_id' '')"
+    $plan.credentials_env = "$(Get-CsmValue $Config 'diagnose_delivery' 'credentials_env' '')"
+    $plan.endpoint_base   = "$(Get-CsmValue $Config 'diagnose_delivery' 'endpoint_base' 'https://www.googleapis.com')".TrimEnd('/')
+    $plan.write_receipt   = ("$(Get-CsmValue $Config 'diagnose_delivery' 'write_receipt' 'true')".ToLower() -ne 'false')
+    if ($plan.provider -ne 'google-drive') { $plan.reason = 'provider-not-implemented'; return $plan }
+    if (-not $plan.folder_id)       { $plan.reason = 'missing-folder-id'; return $plan }
+    if (-not $plan.credentials_env) { $plan.reason = 'missing-credentials-env'; return $plan }
+    $tok = [Environment]::GetEnvironmentVariable($plan.credentials_env)
+    if (-not $tok) { $plan.reason = 'credentials-unresolvable'; return $plan }
+    $plan.ready = $true; $plan.reason = 'ok'
+    return $plan
+}
+
+function Get-CsmDeliveryErrorClass {
+    # #18/B8: classify an upload failure into a short, PII-free label. Never throws.
+    param($Exception)
+    if (-not $Exception) { return 'error:unknown' }
+    $status = $null
+    try { if ($Exception.PSObject.Properties['Response'] -and $Exception.Response) { $status = [int]$Exception.Response.StatusCode } } catch { }
+    if (-not $status) { try { if ($Exception.PSObject.Properties['StatusCode'] -and $Exception.StatusCode) { $status = [int]$Exception.StatusCode } } catch { } }
+    if (-not $status) { $m0 = "$($Exception.Message)"; if ($m0 -match '\b(40[0-9]|4[1-9][0-9]|50[0-9])\b') { $status = [int]$Matches[1] } }
+    if ($status) {
+        if ($status -eq 401) { return 'http-401-unauthorized' }
+        if ($status -eq 403) { return 'http-403-forbidden' }
+        if ($status -eq 404) { return 'http-404-not-found' }
+        return "http-$status"
+    }
+    # Type-based detection first: exception MESSAGES are locale-dependent, type names are not.
+    $cur = $Exception; $depth = 0
+    while ($cur -and $depth -lt 5) {
+        if ($cur.GetType().Name -match 'Socket|HttpRequest|WebException|Timeout') { return 'network' }
+        $cur = $cur.InnerException; $depth++
+    }
+    $msg = "$($Exception.Message)"
+    if ($msg -match 'unable to connect|connection|refused|resolve|timed out|timeout|SSL|TLS|proxy|No such host') { return 'network' }
+    return ("error:" + $Exception.GetType().Name)
+}
+
+function Send-CsmProviderUpload {
+    # #18: one-way, one-shot upload of a LOCAL diagnostic artifact past the sync client, via
+    # the provider REST API. google-drive: multipart files.create into the configured folder
+    # ID. The token is read from the env var NAMED in the plan (A2/B13) and never persisted.
+    # The uploaded bytes are exactly the file as written locally (byte-identical).
+    param([Parameter(Mandatory)]$Plan, [Parameter(Mandatory)][string]$FilePath)
+    if (-not $Plan.ready) { throw "delivery plan not ready: $($Plan.reason)" }
+    $tok = [Environment]::GetEnvironmentVariable($Plan.credentials_env)
+    if (-not $tok) { throw "credentials env var '$($Plan.credentials_env)' is empty" }
+    $name = [System.IO.Path]::GetFileName($FilePath)
+    $contentBytes = [System.IO.File]::ReadAllBytes($FilePath)
+    $metaJson = (@{ name = $name; parents = @($Plan.folder_id) } | ConvertTo-Json -Compress)
+    $b = "csm-" + [guid]::NewGuid().ToString('N')
+    $nl = "`r`n"
+    $head = "--$b$nl" + "Content-Type: application/json; charset=UTF-8$nl$nl" + $metaJson + $nl + "--$b$nl" + "Content-Type: application/json$nl$nl"
+    $tail = "$nl--$b--$nl"
+    $ms = New-Object System.IO.MemoryStream
+    $hb = [System.Text.Encoding]::UTF8.GetBytes($head); $ms.Write($hb, 0, $hb.Length)
+    $ms.Write($contentBytes, 0, $contentBytes.Length)
+    $tb = [System.Text.Encoding]::UTF8.GetBytes($tail); $ms.Write($tb, 0, $tb.Length)
+    $body = $ms.ToArray(); $ms.Dispose()
+    $uri = "$($Plan.endpoint_base)/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink"
+    $resp = Invoke-RestMethod -Method Post -Uri $uri -Headers @{ Authorization = "Bearer $tok" } -ContentType "multipart/related; boundary=$b" -Body $body -TimeoutSec 60
+    $url = $null
+    if ($resp -and $resp.PSObject.Properties['webViewLink'] -and $resp.webViewLink) { $url = "$($resp.webViewLink)" }
+    elseif ($resp -and $resp.PSObject.Properties['id'] -and $resp.id) { $url = "https://drive.google.com/file/d/$($resp.id)/view" }
+    return @{ id = "$($resp.id)"; url = $url }
+}

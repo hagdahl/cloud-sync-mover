@@ -68,4 +68,29 @@ $meta = New-CsmMeta -Config $cfg -Phase 'diagnose' -Success ($health -eq 'health
 $meta['health']  = $health
 $meta['summary'] = $summary
 Write-CsmAtomic $done ($meta | ConvertTo-Json -Depth 6)
+
+# #18 (ADR-014): optional delivery of the artifact PAST the (possibly broken) sync client via
+# the provider REST API. Opt-in + config-gated (default off, A1); credentials only as the NAME
+# of an env var (A2/B13); soft-fail - a delivery error never fails the diagnostic but is always
+# surfaced (B8). The uploaded bytes are the artifact exactly as just written; the local file is
+# then re-written with the delivery outcome appended and remains the authoritative copy.
+$plan = Resolve-CsmDeliveryPlan $cfg
+if ($plan.enabled) {
+    $delivered = $false; $dUrl = $null; $dErr = $null
+    if (-not $plan.ready) { $dErr = $plan.reason }
+    else {
+        try { $up = Send-CsmProviderUpload -Plan $plan -FilePath $done; $delivered = $true; $dUrl = $up.url }
+        catch { $dErr = Get-CsmDeliveryErrorClass $_.Exception }
+    }
+    $meta['delivered_via_api']       = $delivered
+    $meta['delivered_via_api_url']   = $dUrl
+    $meta['delivered_via_api_error'] = $dErr
+    Write-CsmAtomic $done ($meta | ConvertTo-Json -Depth 6)
+    if ($plan.write_receipt) {
+        $receipt = [ordered]@{ schema = 'csm.delivery-receipt/1'; artifact = (Split-Path $done -Leaf); provider = $plan.provider; delivered_via_api = $delivered; delivered_via_api_url = $dUrl; delivered_via_api_error = $dErr; finishedUtc = (Get-Date).ToUniversalTime().ToString('s') }
+        Write-CsmAtomic (Join-Path $wd "diagnose_${stamp}_delivery.json") ($receipt | ConvertTo-Json)
+    }
+    if ($delivered) { Write-Host "DELIVERY: uploaded past the sync client -> $dUrl" }
+    else { Write-Host "DELIVERY: NOT uploaded ($dErr) - the local artifact remains authoritative: $done" }
+}
 Write-Host "DIAGNOSE: health=$health (provider=$prov) -> $done"

@@ -89,6 +89,25 @@ Diagnose (#16) or preflight (#17) reports a mirror root's staging queue as `bloc
 
 Do **not** rename or delete `%LOCALAPPDATA%\Google\DriveFS\` for this — that is the last resort and loses the local upsync queue. Repeat for every root the scan flags (each top-level mirror root can carry its own queue, including ReadOnly-attributed backup roots).
 
+## Delivering the diagnostic when the client is broken (#18)
+
+The diagnose report normally reaches other devices via the sync client — but when the client *is* the suspected-broken part (the exact situation diagnose exists for), the report about the broken upload queue would sit in that same queue. `[diagnose_delivery]` gives the phase an opt-in path that bypasses the client entirely and uploads the redacted artifact via the provider's REST API:
+
+1. In the provider's web UI, create a dedicated **"diagnostics inbox"** folder and copy its **folder ID** from the URL.
+2. Obtain an OAuth access token with file-create scope — for Google Drive, `drive.file` is sufficient and least-privilege (it can only see files it created itself).
+3. Put the token in an environment variable (e.g. `CSM_DIAG_TOKEN`) — **never** in the config file.
+4. In `config.local`:
+   ```
+   [diagnose_delivery]
+   provider_upload_enabled = true
+   provider = google-drive
+   folder_id = <the folder id>
+   credentials_env = CSM_DIAG_TOKEN
+   ```
+5. Run diagnose as usual. The local artifact in `work_dir` is always written first and remains the authoritative copy; on success the run prints `DELIVERY: uploaded past the sync client -> <url>` and the artifact + a local receipt record the URL. On any failure (missing/expired token, 4xx, network) the delivery **soft-fails**: the outcome is classified and recorded, the diagnostic itself still completes.
+
+Only the redacted diagnose artifact is ever uploaded (counts + health + root ordinals — no paths, filenames, or account ids). Inventory CSVs, hash baselines, and log excerpts stay local. See `00_admin/DECISIONS.md` ADR-014.
+
 ## 7b. Log diagnosis (deeper)
 
 - **OneDrive ODL logs (throttling details):**
