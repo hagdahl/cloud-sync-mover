@@ -33,6 +33,7 @@ Or phase by phase:
 3. **Phase 2 — preflight (safe):**
    `powershell -File 03_src\ps\Test-MovePreflight.ps1 -Config .\config.local -SyncConfirmed`
    All gates must be green: free space, writability, disk type, provider/mode validity, and **sync-health** — which reports `NEEDS_CONFIRMATION` (a FAIL) until you pass `-SyncConfirmed` or set `[move] assume_up_to_date = true`. Preflight also consumes a recent `diagnose` result (step 7): a fresh `initializing` provider reports **NEEDS_WAIT** (wait for the client to finish its startup/scan, don't treat it as a hard failure); a fresh `blocked` fails; Google Drive **mirror** mode is blocked if the local content is incomplete (any online-only file); and a large or inaccessible provider staging dir is flagged (a possibly-stuck upload queue).
+   Since #17 preflight additionally runs the **`SOURCE_STAGE_QUEUE_STUCK` gate**: it re-scans every configured mirror root for a stuck staging queue (see step 7) and grades `NEEDS_CONFIRMATION` when any root reads `blocked` — a stuck `.tmp.driveupload` is *inside* the mount tree, so a move would carry it (and the blocked upsync) to the destination. Clear paths, in order of preference: **(1)** clean the queue (recipe below) and re-run — the fresh scan then passes on its own evidence; **(2)** set `[move] assume_stage_queue_clean = true` as a deliberate recorded acceptance; **(3)** pass `-ForceStageQueue` **together with** `-StageQueueReason "<why>"` — the flag alone is refused, and both the override and the reason are recorded in the preflight artifact (same discipline as retire-source `-Force`).
 
 4. **The move (manual, Method A):** follow `PROVIDER-NOTES.md` for your client — unlink, relink, Change location → `target_root`. The tool does NOT move it for you (the client must own the move).
 
@@ -73,6 +74,20 @@ powershell -File 03_src\ps\start_all_jobs.ps1    # restarts in a controlled mann
 - Empty target destination but "verify" green → FoD placeholders (PLAYBOOK error mech. 2). Run the hydration-aware verify.
 - MD5 errors en masse → hydration probably in progress (error mech. 3), wait.
 - The client shows hundreds of "sync errors" → run the state diagnosis; almost always throttling (PLAYBOOK 7).
+
+## Stuck staging queue (`SOURCE_STAGE_QUEUE_STUCK`) — cleanup recipe
+
+Diagnose (#16) or preflight (#17) reports a mirror root's staging queue as `blocked` when it is non-empty **and** a deletability probe is denied. The classic cause is `.tmp.driveupload` content carried over from an older deployment/disk whose ACL or owner denies delete — the client then loops `RemoveTempDirectoriesFromRoots ... PERMISSION_DENIED` and **all** mirror upsync stalls, silently. Cleanup (operator step, elevated prompt):
+
+1. **Quit the sync client completely** (tray icon → Quit) and verify the process is gone.
+2. Take ownership and grant yourself full control over the queue:
+   `takeown /F "<mirror-root>\.tmp.driveupload" /R /D Y`
+   `icacls "<mirror-root>\.tmp.driveupload" /grant "%USERNAME%:(OI)(CI)F" /T`
+3. Delete it: `rd /S /Q "<mirror-root>\.tmp.driveupload"`
+4. Restart the client and let it settle (it recreates a fresh staging dir when needed).
+5. Re-run diagnose and confirm the root's `mount_stage_queues` entry now reads `present = false` (or `size_bytes = 0`) — that evidence is what clears the preflight gate.
+
+Do **not** rename or delete `%LOCALAPPDATA%\Google\DriveFS\` for this — that is the last resort and loses the local upsync queue. Repeat for every root the scan flags (each top-level mirror root can carry its own queue, including ReadOnly-attributed backup roots).
 
 ## 7b. Log diagnosis (deeper)
 

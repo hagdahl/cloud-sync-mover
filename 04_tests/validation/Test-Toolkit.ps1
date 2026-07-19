@@ -300,5 +300,43 @@ icacls "$d23" /remove:d "*S-1-1-0" | Out-Null
 icacls "$b23" /remove:d "*S-1-1-0" | Out-Null
 Remove-Item -Recurse -Force $g23
 
+# 24) preflight SOURCE_STAGE_QUEUE_STUCK gate (#17): blocked queue under the source root =>
+#     NEEDS_CONFIRMATION; cleared via config assume, or -ForceStageQueue WITH a reason (the
+#     flag alone must NOT clear it - trap case). Separate work_dirs per run (stamp collision).
+$p24 = Join-Path ([System.IO.Path]::GetTempPath()) ("csm_p24_" + [guid]::NewGuid().ToString('N'))
+$s24 = Join-Path $p24 'src'; $t24 = Join-Path $p24 'tgt'
+New-Item -ItemType Directory -Force (Join-Path $s24 '.tmp.driveupload'), $t24 | Out-Null
+$b24 = Join-Path $s24 '.tmp.driveupload\old.bin'
+'x' | Out-File $b24
+icacls "$b24" /deny "*S-1-1-0:(DE)" | Out-Null
+$d24 = Join-Path $s24 '.tmp.driveupload'
+icacls "$d24" /deny "*S-1-1-0:(DC)" | Out-Null
+function New-P24Cfg([string]$wd, [string]$extraMove) {
+    New-Item -ItemType Directory -Force $wd | Out-Null
+    $f = Join-Path $wd 'cfg.ini'
+    Set-Content $f "[paths]`nsource_root = $s24`ntarget_root = $t24`nwork_dir = $wd`n[provider]`nname = google-drive`n[google_drive]`nmode = streaming`n[move]`n$extraMove"
+    return $f
+}
+$wdA = Join-Path $p24 'wdA'; $cfgA = New-P24Cfg $wdA ''
+& (Join-Path $ps 'Test-MovePreflight.ps1') -Config $cfgA | Out-Null
+$artA = Get-CsmLatestArtifact $wdA 'preflight'
+$gateA = $artA.stage_queue_gate | ConvertFrom-Json
+Check "preflight gate blocks"        ($gateA.gate -eq 'SOURCE_STAGE_QUEUE_STUCK' -and $gateA.state -eq 'NEEDS_CONFIRMATION' -and $gateA.roots_blocked -eq 1)
+$wdB = Join-Path $p24 'wdB'; $cfgB = New-P24Cfg $wdB 'assume_stage_queue_clean = true'
+& (Join-Path $ps 'Test-MovePreflight.ps1') -Config $cfgB | Out-Null
+$artB = Get-CsmLatestArtifact $wdB 'preflight'
+Check "preflight gate config-cleared" ((($artB.stage_queue_gate | ConvertFrom-Json).state) -eq 'PASS' -and $artB.stage_queue_assumed_clean -eq $true)
+$wdC = Join-Path $p24 'wdC'; $cfgC = New-P24Cfg $wdC ''
+& (Join-Path $ps 'Test-MovePreflight.ps1') -Config $cfgC -ForceStageQueue -StageQueueReason 'fixture override' | Out-Null
+$artC = Get-CsmLatestArtifact $wdC 'preflight'
+Check "preflight gate forced+reason"  ((($artC.stage_queue_gate | ConvertFrom-Json).state) -eq 'PASS' -and $artC.stage_queue_forced -eq $true -and $artC.stage_queue_force_reason -eq 'fixture override')
+$wdD = Join-Path $p24 'wdD'; $cfgD = New-P24Cfg $wdD ''
+& (Join-Path $ps 'Test-MovePreflight.ps1') -Config $cfgD -ForceStageQueue | Out-Null
+$artD = Get-CsmLatestArtifact $wdD 'preflight'
+Check "preflight flag alone refused"  ((($artD.stage_queue_gate | ConvertFrom-Json).state) -eq 'NEEDS_CONFIRMATION')
+icacls "$d24" /remove:d "*S-1-1-0" | Out-Null
+icacls "$b24" /remove:d "*S-1-1-0" | Out-Null
+Remove-Item -Recurse -Force $p24
+
 Write-Host ""
 if ($script:fail -eq 0) { Write-Host "ALL SMOKE TESTS PASSED" } else { Write-Host "$($script:fail) TEST(S) FAILED"; exit 1 }

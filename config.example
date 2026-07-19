@@ -81,6 +81,10 @@ assume_up_to_date = false
 move_completed_utc =
 # Retire-source gate (#2): reject preflight/structure/verify artifacts older than this many days.
 retire_max_artifact_age_days = 7
+# Stage-queue gate (#17): preflight grades NEEDS_CONFIRMATION when a mirror root's staging
+# queue is stuck (non-empty + undeletable, see [google_drive] stage_dir_name). Set true ONLY
+# as a deliberate, recorded acceptance - the queue is otherwise carried to the destination.
+assume_stage_queue_clean = false
 
 [enumeration]
 # Junction/reparse safety (#13) is always on: the read phases never traverse THROUGH a junction.

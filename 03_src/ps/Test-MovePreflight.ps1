@@ -1,5 +1,6 @@
-# Test-MovePreflight.ps1 - Phase 2: gates before the move (free space, writability, disk type, sync-health)
-param([Parameter(Mandatory)][string]$Config, [switch]$SyncConfirmed)
+# Test-MovePreflight.ps1 - Phase 2: gates before the move (free space, writability, disk type,
+# sync-health, and since #17 the source stage-queue gate SOURCE_STAGE_QUEUE_STUCK).
+param([Parameter(Mandatory)][string]$Config, [switch]$SyncConfirmed, [switch]$ForceStageQueue, [string]$StageQueueReason)
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\_common.ps1"
 
@@ -147,6 +148,40 @@ if ($diag) {
     }
 }
 
+# 4f) Source stage-queue gate (#17): a stuck (non-empty + undeletable) provider staging queue
+#     under a sync-mount root is CARRIED ALONG by a move (robocopy and the client's own
+#     change-location both reproduce the mount tree) and poisons the destination with the same
+#     blocked upsync. Runs the #16 mount scan FRESH (not the cached diagnose artifact) and
+#     grades any 'blocked' entry as NEEDS_CONFIRMATION (fail-safe, same grade as sync-health).
+#     Clear paths: (1) clean the queue and re-run (the fresh scan then passes), (2) config
+#     [move] assume_stage_queue_clean = true, (3) -ForceStageQueue WITH -StageQueueReason
+#     (both required; the override + reason are recorded in the artifact).
+$stageStuck = $false
+$stageName = Get-CsmStageDirName $cfg
+if ($stageName) {
+    $mroots = @(Get-CsmMirrorRoots $cfg)
+    $mq = @(); if ($mroots.Count -gt 0) { $mq = @(Get-CsmMountStageQueues -Roots $mroots -StageDirName $stageName) }
+    $nBlocked = @($mq | Where-Object { $_.class -eq 'blocked' }).Count
+    $nWarn    = @($mq | Where-Object { $_.class -eq 'warning' }).Count
+    $gateState = 'PASS'
+    if ($nBlocked -gt 0) {
+        $assumeClean = ("$(Get-CsmValue $cfg 'move' 'assume_stage_queue_clean' 'false')".ToLower() -eq 'true')
+        if ($ForceStageQueue -and $StageQueueReason) {
+            $checks['stage_queue_forced'] = $true
+            $checks['stage_queue_force_reason'] = $StageQueueReason
+        } elseif ($assumeClean) {
+            $checks['stage_queue_assumed_clean'] = $true
+        } else {
+            $gateState = 'NEEDS_CONFIRMATION'; $stageStuck = $true; $pass = $false
+            $hint = 'A non-empty, undeletable staging queue (e.g. .tmp.driveupload) sits under a mirror root and would be carried to the destination. Clean it first (USER_GUIDE "Stuck staging queue"), or set [move] assume_stage_queue_clean=true, or pass -ForceStageQueue with -StageQueueReason "<why>".'
+            if ($ForceStageQueue -and -not $StageQueueReason) { $hint = "-ForceStageQueue requires -StageQueueReason '<recorded reason>'. " + $hint }
+            $checks['stage_queue_hint'] = $hint
+        }
+    }
+    $checks['stage_queue_gate'] = ([ordered]@{ gate = 'SOURCE_STAGE_QUEUE_STUCK'; state = $gateState; roots_blocked = $nBlocked; roots_warning = $nWarn } | ConvertTo-Json -Compress)
+    if ($mq.Count) { $checks['mount_stage_queues'] = ($mq | ConvertTo-Json -Compress) }   # redacted (ordinals only)
+}
+
 # 5) Sync-health gate (#1): a real gate, not a passive reminder.
 #    CONFIRMED only via -SyncConfirmed or [move] assume_up_to_date=true; otherwise NEEDS_CONFIRMATION -> FAIL.
 $sh = Resolve-CsmSyncHealth $cfg -Confirmed:$SyncConfirmed
@@ -161,5 +196,5 @@ foreach ($k in $checks.Keys) { $meta[$k] = $checks[$k] }
 $meta['PASS'] = $pass   # legacy readability field
 Write-CsmAtomic $done ($meta | ConvertTo-Json)
 $meta.GetEnumerator() | ForEach-Object { Write-CsmLog ("{0}: {1}" -f $_.Key, $_.Value) $log }
-$verdict = if ($pass) { 'PASS' } elseif ($needsWait) { 'NEEDS_WAIT' } elseif ($sh.status -ne 'CONFIRMED') { 'NEEDS_CONFIRMATION' } else { 'FAIL' }
+$verdict = if ($pass) { 'PASS' } elseif ($needsWait) { 'NEEDS_WAIT' } elseif ($stageStuck -or $sh.status -ne 'CONFIRMED') { 'NEEDS_CONFIRMATION' } else { 'FAIL' }
 Write-Host ("PREFLIGHT: {0}{1}" -f $verdict, ($(if ($pass) { '' } else { ' - see ' + $done })))

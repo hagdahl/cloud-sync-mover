@@ -5,7 +5,9 @@ param(
     [string]$Phase = 'plan',
     [switch]$Execute,
     [switch]$SyncConfirmed,
-    [switch]$Force
+    [switch]$Force,
+    [switch]$ForceStageQueue,
+    [string]$StageQueueReason
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\_common.ps1"
@@ -39,7 +41,7 @@ switch ($Phase) {
     }
     'inventory' { & (Join-Path $PSScriptRoot 'Invoke-Inventory.ps1')     -Config $Config }
     'baseline'  { & (Join-Path $PSScriptRoot 'Invoke-Md5Baseline.ps1')   -Config $Config }
-    'preflight' { & (Join-Path $PSScriptRoot 'Test-MovePreflight.ps1')   -Config $Config -SyncConfirmed:$SyncConfirmed }
+    'preflight' { & (Join-Path $PSScriptRoot 'Test-MovePreflight.ps1')   -Config $Config -SyncConfirmed:$SyncConfirmed -ForceStageQueue:$ForceStageQueue -StageQueueReason $StageQueueReason }
     'structure' { & (Join-Path $PSScriptRoot 'Compare-MoveStructure.ps1') -Config $Config }
     'verify'    { & (Join-Path $PSScriptRoot 'Invoke-HydrationVerify.ps1') -Config $Config }
     'diagnose'  { & (Join-Path $PSScriptRoot 'Invoke-CsmDiagnose.ps1')     -Config $Config }
