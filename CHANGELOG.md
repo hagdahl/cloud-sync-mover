@@ -154,3 +154,11 @@ Three conformance fixes to the diagnose / #18-delivery path. When #18 delivery f
 - Files: `03_src/ps/_common.ps1`, `03_src/ps/Invoke-CsmDiagnose.ps1`, `config.example`, `00_admin/DECISIONS.md` (ADR-014), `01_docs/DATA-FORMATS.md` (redacted header + `delivery_attempts` + corrected `state_report` field list).
 - Rollback: `git revert` this commit (or leave `provider_upload_enabled=false` - the default path is a no-op).
 - Verification: full `Test-Toolkit.ps1` green on Windows PowerShell 5.1 and 7 (delivery soft-fail, happy-path mock upload, no-token-leak); `.ps1` ASCII-only + parse-clean; `.md` UTF-8 no-BOM.
+
+## 2026-07-20 20:28 UTC - Emergency stop reaches the foreground watchdog (A7)
+A7 requires all automation to be stoppable in one sweep, but `stop_all_jobs.ps1` only swept session-scoped `Get-Job csm_*` background jobs - and the one long-running actor, `Watch-TargetGrowth.ps1`, runs in the FOREGROUND (unreachable by `Get-Job` from another session) while no code created any `csm_*` job.
+- `Watch-TargetGrowth.ps1` now publishes its PID to a `csm_watch_<ts>.pid` file in `work_dir` and removes it on ANY exit (try/finally: clean end, budget breach, or Ctrl+C).
+- `stop_all_jobs.ps1` now also stops any watchdog listed in a `csm_*.pid` file in `work_dir`, with a `$procId -ne $PID` self-guard so the `-AutoStop` path (which dot-invokes stop in the watchdog's own process) does not kill itself.
+- Files: `03_src/ps/Watch-TargetGrowth.ps1`, `03_src/ps/stop_all_jobs.ps1`.
+- Rollback: `git revert` this commit.
+- Verification: `.ps1` ASCII-only + parse-clean; full `Test-Toolkit.ps1` green on Windows PowerShell 5.1 and 7.
