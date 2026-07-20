@@ -162,3 +162,9 @@ A7 requires all automation to be stoppable in one sweep, but `stop_all_jobs.ps1`
 - Files: `03_src/ps/Watch-TargetGrowth.ps1`, `03_src/ps/stop_all_jobs.ps1`.
 - Rollback: `git revert` this commit.
 - Verification: `.ps1` ASCII-only + parse-clean; full `Test-Toolkit.ps1` green on Windows PowerShell 5.1 and 7.
+
+## 2026-07-20 20:29 UTC - Fail-closed messaging in the Drive log scanner (A4/ADR-012)
+`Read-GoogleDriveLogs.ps1` printed "Drive mirror looks healthy" when no deletion/inode markers were found - asserting health from the mere ABSENCE of a danger marker, which ADR-012 forbids (only a positive verified signal is healthy). Reworded to state this is NOT proof of health and to point at `Invoke-CsmDiagnose` / `Invoke-RoundTripProbe` for positive confirmation. Advisory host text only; no verdict logic changed.
+- Files: `03_src/ps/Read-GoogleDriveLogs.ps1`.
+- Rollback: `git revert` this commit.
+- Verification: `.ps1` ASCII-only + parse-clean; full `Test-Toolkit.ps1` green on Windows PowerShell 5.1 and 7.

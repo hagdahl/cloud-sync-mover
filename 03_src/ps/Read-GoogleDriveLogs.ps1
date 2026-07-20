@@ -27,7 +27,9 @@ foreach ($k in $markers.Keys) {
     }
 }
 if (-not $danger) {
-    Write-Host "  No deletion/inode markers in the scanned tail - Drive mirror looks healthy."
+    Write-Host "  No deletion/inode markers in the scanned tail - this is NOT proof of health (absence"
+    Write-Host "  of a danger marker is not a positive signal, ADR-012). Confirm with Invoke-CsmDiagnose"
+    Write-Host "  and Invoke-RoundTripProbe before trusting the mirror or retiring the source."
 } else {
     Write-Host "  WARNING: deletion/inode markers present. If MIRROR_GDOC_DELETED is growing, STOP Drive"
     Write-Host "           NOW (stop_all_jobs.ps1) and follow the Google Drive recovery notes before restart."
