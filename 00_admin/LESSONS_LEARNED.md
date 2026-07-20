@@ -2,6 +2,14 @@
 
 Append-only. Newest on top. Distilled and de-identified from two real migrations (Google Drive mirror, OneDrive Personal). Unscrubbed originals in `_sources/`.
 
+## 2026-07-20 — Field validation of #16/#18, and a monitoring bridge that depended on the diagnosed client
+
+The mirror-upsync block from the 2026-07-19 entry was independently tracked for about five days by an external, hourly, memoryless watch process reading a shared cloud folder. Three lessons confirmed themselves in the field.
+
+- **The remediation shape and the #16 signal held.** Force-killing the client and quarantine-renaming the stuck staging directory (a plain rename on the same volume — no ACL or ownership change needed) cleared the local block: the `RemoveTempDirectoriesFromRoots ... PERMISSION_DENIED` loop went from thousands per session to zero, and the metadata WAL collapsed from hundreds of MB to single digits. That is exactly the `blocked` → cleared transition #16's mount-scan is meant to observe. (A4 / B8 — validation of #16.)
+- **A hard block and a throughput throttle are different failures; clearing the first must not be read as clearing the second.** Once the staging queue was gone, a separate condition dominated: a very large local hashing/indexing queue (hundreds of thousands of small files from developer trees — dependency and virtual-env folders pulled into the mirror) starves the target files while the network sits idle. The client's "syncing / N hours left" UI is not proof of progress — verify per file in the cloud, not by the client's counter or its time estimate. (A4 — the same "counter lies" lesson as the OneDrive hydration case.)
+- **A diagnostic's INPUT collection must not depend on the diagnosed channel — the mount-side twin of #18.** The watch process could only see what a local agent uploaded into the shared folder, but that upload ran through the same throttled client being diagnosed, so for days it received nothing and produced almost no independent signal; the useful data all arrived out-of-band. #18 already requires a diagnostic's *delivery* to bypass the broken client; this run shows the same must hold for its *collection*. The fix is a client-independent local collector that writes diagnostics via the provider API (the #18 path) rather than through the mount. (B3 / B14; reinforces open #15.)
+
 ## 2026-07-19 — Google Drive mirror upsync blocked by a locked `.tmp.driveupload` staging queue
 
 Observed in a live mirror deployment where new writes into a sync-mount subfolder had stopped reaching the cloud for five days (verified against another device and mobile). Client, network, quota, disk space, pause state and account settings were all normal — the failure surface was inside the client itself.
