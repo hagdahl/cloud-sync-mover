@@ -145,3 +145,12 @@ The two OneDrive reader wrappers piped the Python readers' JSON straight to `Tee
 - Files: `03_src/ps/Read-OneDriveLogs.ps1`, `03_src/ps/Read-OneDriveSyncState.ps1`.
 - Rollback: `git revert` this commit.
 - Verification: `.ps1` ASCII-only + parse-clean; full `Test-Toolkit.ps1` green on Windows PowerShell 5.1 and 7.
+
+## 2026-07-20 20:27 UTC - Diagnose path: redact the delivered artifact (A2), drop a dead access-denied field (A4), bounded-retry delivery (A7)
+Three conformance fixes to the diagnose / #18-delivery path. When #18 delivery fires is unchanged (opt-in, default off); these make it conform to PART A.
+- **A2 - the delivered artifact carried local paths.** `Invoke-CsmDiagnose.ps1` built its artifact with `New-CsmMeta`, whose header embedded `source_root`/`target_root`/`physical_*` (a Windows username = indirect PD). With `[diagnose_delivery]` enabled that file was uploaded byte-for-byte, contradicting the script's own "REDACTED" header, ADR-012 and ADR-014. `New-CsmMeta` gains a `-Redacted` switch (used by the diagnose phase) that OMITS the path fields and stamps `roots_redacted:true`, so the artifact is PII-free BY CONSTRUCTION - local and uploaded copies alike. Other phases keep the paths (their artifacts stay local, ADR-013).
+- **A4 - a dead danger signal.** The OneDrive branch looped over `$a.recent_error_codes`, a field `read_sync_state.py` never emits, so `accessDenied` was always false. Removed (not rewired onto the reader's `op_result_codes` 403, which overlaps with throttling that A4 deliberately does not treat as danger). The branch now also fails closed on a per-account `unknown` verdict.
+- **A7 - single-attempt upload.** The one-shot delivery now retries transient failures (network / HTTP 5xx) with bounded exponential backoff and gives up immediately on auth errors (401/403/404), via the new `Invoke-CsmUploadWithRetry`; still soft-fail. Retry params live in config (`[diagnose_delivery] max_attempts`/`retry_base_seconds`, B13). ADR-014 reconciled.
+- Files: `03_src/ps/_common.ps1`, `03_src/ps/Invoke-CsmDiagnose.ps1`, `config.example`, `00_admin/DECISIONS.md` (ADR-014), `01_docs/DATA-FORMATS.md` (redacted header + `delivery_attempts` + corrected `state_report` field list).
+- Rollback: `git revert` this commit (or leave `provider_upload_enabled=false` - the default path is a no-op).
+- Verification: full `Test-Toolkit.ps1` green on Windows PowerShell 5.1 and 7 (delivery soft-fail, happy-path mock upload, no-token-leak); `.ps1` ASCII-only + parse-clean; `.md` UTF-8 no-BOM.

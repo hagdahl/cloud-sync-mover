@@ -39,32 +39,42 @@ elseif ($prov -like 'onedrive-*') {
     try { & (Join-Path $PSScriptRoot 'Read-OneDriveSyncState.ps1') -Config $Config | Out-Null; $readerOk = $true } catch { $readerOk = $false }
     $rep = Get-ChildItem (Join-Path $wd 'state_report_*.json') -EA SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
     $fresh = ($null -ne $rep -and $rep.LastWriteTimeUtc -gt $preTime)
-    $parsedOk = $false; $conflicts = 0; $accessDenied = $false; $accounts = 0
+    $parsedOk = $false; $conflicts = 0; $accessDenied = $false; $accounts = 0; $anyUnknown = $false
     if ($rep) {
         try {
             $j = Get-Content -LiteralPath $rep.FullName -Raw | ConvertFrom-Json
             foreach ($a in @($j.accounts)) {
                 $accounts++
                 $conflicts += [int]$a.conflicts
-                foreach ($ec in @($a.recent_error_codes)) { if ("$ec" -match '403|AccessDenied|denied') { $accessDenied = $true } }
+                # Fail closed: a per-account 'unknown' verdict (unreadable DB / schema drift, per
+                # read_sync_state.py) means this account's state could not be confirmed -> not healthy.
+                if ("$($a.verdict)" -eq 'unknown') { $anyUnknown = $true }
             }
             $parsedOk = $true
         } catch { $parsedOk = $false }
     }
+    # A4 (verify field names against the real schema): the prior code looped over $a.recent_error_codes,
+    # a field read_sync_state.py never emits, so 'accessDenied' was always dead. It is NOT rewired onto
+    # the reader's op_result_codes 403, because a 403 there is indistinguishable from throttling, which
+    # A4 deliberately does not treat as danger. The danger markers are conflicts and unknown verdicts.
     $signals['accessDenied']      = $accessDenied
     $signals['knownDangerMarker'] = ($conflicts -gt 0)
-    $signals['verifiedHealthy']   = ($readerOk -and $fresh -and $parsedOk -and $accounts -gt 0 -and $conflicts -eq 0 -and -not $accessDenied)
-    $summary['accounts']     = $accounts
-    $summary['conflicts']    = $conflicts
-    $summary['report_fresh'] = $fresh
-    $summary['parsed']       = $parsedOk
+    $signals['verifiedHealthy']   = ($readerOk -and $fresh -and $parsedOk -and $accounts -gt 0 -and $conflicts -eq 0 -and -not $accessDenied -and -not $anyUnknown)
+    $summary['accounts']         = $accounts
+    $summary['conflicts']        = $conflicts
+    $summary['report_fresh']     = $fresh
+    $summary['parsed']           = $parsedOk
+    $summary['unknown_accounts'] = $anyUnknown
 }
 else {
     $summary['note'] = "no diagnostic implementation for provider '$prov'"
 }
 
 $health = Get-CsmDiagnoseHealth $signals
-$meta = New-CsmMeta -Config $cfg -Phase 'diagnose' -Success ($health -eq 'healthy') -Errors 0 -ErrorCategories @()
+# -Redacted: the diagnose artifact carries NO local paths (source_root/target_root/physical_*), so it
+# is PII-free by construction and safe to deliver off-box (#18/ADR-012/ADR-014). Other phases keep the
+# path identity because their artifacts stay local (ADR-013).
+$meta = New-CsmMeta -Config $cfg -Phase 'diagnose' -Success ($health -eq 'healthy') -Errors 0 -ErrorCategories @() -Redacted
 $meta['health']  = $health
 $meta['summary'] = $summary
 Write-CsmAtomic $done ($meta | ConvertTo-Json -Depth 6)
@@ -79,8 +89,14 @@ if ($plan.enabled) {
     $delivered = $false; $dUrl = $null; $dErr = $null
     if (-not $plan.ready) { $dErr = $plan.reason }
     else {
-        try { $up = Send-CsmProviderUpload -Plan $plan -FilePath $done; $delivered = $true; $dUrl = $up.url }
-        catch { $dErr = Get-CsmDeliveryErrorClass $_.Exception }
+        # A7: bounded retry-with-backoff on transient failures; give up immediately on auth errors.
+        # Attempt count and backoff base come from config (B13: retry parameters belong in config).
+        $maxAtt    = [int](Get-CsmValue $cfg 'diagnose_delivery' 'max_attempts' 3)
+        $baseDelay = [double](Get-CsmValue $cfg 'diagnose_delivery' 'retry_base_seconds' 2)
+        $dr = Invoke-CsmUploadWithRetry -Plan $plan -FilePath $done -MaxAttempts $maxAtt -BaseDelaySec $baseDelay
+        $delivered = $dr.ok; $dErr = $dr.error
+        if ($dr.ok) { $dUrl = $dr.result.url }
+        $meta['delivery_attempts'] = $dr.attempts
     }
     $meta['delivered_via_api']       = $delivered
     $meta['delivered_via_api_url']   = $dUrl

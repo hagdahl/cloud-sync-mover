@@ -68,6 +68,11 @@ folder_id =
 credentials_env =
 # Write a small local receipt (diagnose_<ts>_delivery.json) with the delivery outcome.
 write_receipt = true
+# A7: bounded retry-with-backoff for the upload. Transient failures (network / HTTP 5xx) are
+# retried; auth/permission errors (401/403/404) give up immediately. max_attempts counts the first
+# try too (so 1 = no retry); the n-th backoff sleep is retry_base_seconds * 2^(n-1).
+max_attempts = 3
+retry_base_seconds = 2
 # Test seam: override the API base URL (points the upload at a mock). Empty = real endpoint.
 endpoint_base =
 

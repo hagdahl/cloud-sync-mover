@@ -154,23 +154,32 @@ function Resolve-CsmSyncHealth {
 
 function New-CsmMeta {
     # #7: common artifact header stamped into every *_done.json.
-    param($Config, [string]$Phase, [bool]$Success, [int]$Errors = 0, [string[]]$ErrorCategories = @())
+    # -Redacted (diagnose phase, #18 / ADR-012 / ADR-014): OMIT the local-path identity fields so the
+    # artifact is PII-free BY CONSTRUCTION and safe to deliver off-box - it carries provider/mode +
+    # counts + health only, with roots_redacted=$true standing in for the paths. Non-redacted callers
+    # (preflight/structure/verify/retire) keep the paths; those artifacts stay local (ADR-013).
+    param($Config, [string]$Phase, [bool]$Success, [int]$Errors = 0, [string[]]$ErrorCategories = @(), [switch]$Redacted)
     $mode = 'n/a'
     try { $mode = Resolve-CsmProviderMode $Config } catch { $mode = 'invalid' }
-    return [ordered]@{
-        schema          = 'csm.artifact/1'
-        phase           = $Phase
-        provider        = (Get-CsmValue $Config 'provider' 'name' 'unknown')
-        mode            = $mode
-        source_root     = (Get-CsmValue $Config 'paths' 'source_root')
-        target_root     = (Get-CsmValue $Config 'paths' 'target_root')
-        physical_source_root = (Resolve-CsmPhysicalRoot (Get-CsmValue $Config 'paths' 'source_root'))
-        physical_target_root = (Resolve-CsmPhysicalRoot (Get-CsmValue $Config 'paths' 'target_root'))
-        finishedUtc     = (Get-Date).ToUniversalTime().ToString('s')
-        success         = [bool]$Success
-        errors          = [int]$Errors
-        errorCategories = @($ErrorCategories)
+    $m = [ordered]@{
+        schema   = 'csm.artifact/1'
+        phase    = $Phase
+        provider = (Get-CsmValue $Config 'provider' 'name' 'unknown')
+        mode     = $mode
     }
+    if ($Redacted) {
+        $m['roots_redacted'] = $true
+    } else {
+        $m['source_root']          = (Get-CsmValue $Config 'paths' 'source_root')
+        $m['target_root']          = (Get-CsmValue $Config 'paths' 'target_root')
+        $m['physical_source_root'] = (Resolve-CsmPhysicalRoot (Get-CsmValue $Config 'paths' 'source_root'))
+        $m['physical_target_root'] = (Resolve-CsmPhysicalRoot (Get-CsmValue $Config 'paths' 'target_root'))
+    }
+    $m['finishedUtc']     = (Get-Date).ToUniversalTime().ToString('s')
+    $m['success']         = [bool]$Success
+    $m['errors']          = [int]$Errors
+    $m['errorCategories'] = @($ErrorCategories)
+    return $m
 }
 
 function Get-CsmLatestArtifact {
@@ -634,4 +643,34 @@ function Send-CsmProviderUpload {
     if ($resp -and $resp.PSObject.Properties['webViewLink'] -and $resp.webViewLink) { $url = "$($resp.webViewLink)" }
     elseif ($resp -and $resp.PSObject.Properties['id'] -and $resp.id) { $url = "https://drive.google.com/file/d/$($resp.id)/view" }
     return @{ id = "$($resp.id)"; url = $url }
+}
+
+function Invoke-CsmUploadWithRetry {
+    # #18 / A7: bounded retry-with-backoff around the one-shot delivery. Retries only TRANSIENT
+    # failures (network / http-5xx); gives up IMMEDIATELY on auth/permission/not-found (401/403/404) -
+    # A7 requires backoff for transient errors but forbids retrying forever on auth. The overall call
+    # is still soft-fail (the caller records the outcome and never fails the diagnostic on delivery).
+    # Returns @{ ok=[bool]; result=<upload result or $null>; error=<class or $null>; attempts=[int] }.
+    param(
+        [Parameter(Mandatory)]$Plan,
+        [Parameter(Mandatory)][string]$FilePath,
+        [int]$MaxAttempts = 3,
+        [double]$BaseDelaySec = 2
+    )
+    if ($MaxAttempts -lt 1) { $MaxAttempts = 1 }
+    if ($BaseDelaySec -lt 0) { $BaseDelaySec = 0 }
+    $attempt = 0; $lastErr = $null
+    while ($attempt -lt $MaxAttempts) {
+        $attempt++
+        try {
+            $r = Send-CsmProviderUpload -Plan $Plan -FilePath $FilePath
+            return @{ ok = $true; result = $r; error = $null; attempts = $attempt }
+        } catch {
+            $lastErr = Get-CsmDeliveryErrorClass $_.Exception
+            if ($lastErr -match '^http-40[134]') { break }          # auth/permission/not-found: terminal (A7)
+            if ($attempt -ge $MaxAttempts) { break }
+            Start-Sleep -Seconds ([math]::Round($BaseDelaySec * [math]::Pow(2, $attempt - 1), 2))
+        }
+    }
+    return @{ ok = $false; result = $null; error = $lastErr; attempts = $attempt }
 }

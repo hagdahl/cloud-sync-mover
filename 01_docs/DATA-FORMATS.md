@@ -47,7 +47,7 @@ Written last, atomically. Since v0.3.0 every completion marker carries a common 
 Phase-specific counters follow the header (e.g. inventory: `files`, `online_only`, and since v0.4.0 `root_is_junction`, `reparse_skipped`, `noise_skipped`, `access_errors`, `skipped[]`; structure: `missing_real`, `target_reparse_skipped`, `target_access_errors`; verify: `md5_match`, `md5_mismatch`; preflight keeps the legacy `PASS` plus a `reparse` summary, since v0.5.0 `mirror_content`, `staging`/`staging_note`, and `diagnose_health`/`diagnose_age_min`/`diagnose_note`, and since #17 `stage_queue_gate` `{gate, state, roots_blocked, roots_warning}` + `mount_stage_queues[]` (redacted, see the diagnose section) + on override `stage_queue_forced`/`stage_queue_force_reason` or `stage_queue_assumed_clean`). The retire-source gate requires the latest `preflight`, `structure`, and `verify` markers to be present, `success:true`, mutually consistent in identity, recent, and stable (see PLAYBOOK / USER_GUIDE).
 
 ## diagnose_<ts>_done.json  (phase diagnose, #5 — v0.5.0)
-Common header (`success` = `health == 'healthy'`) plus a redacted verdict — counts + health only, no account ids / local paths / filenames:
+Common header (`success` = `health == 'healthy'`) plus a redacted verdict — counts + health only, no account ids / local paths / filenames. Unlike the other phases' markers, the diagnose header is written **redacted by construction** (since #18 / ADR-014): it OMITS `source_root` / `target_root` / `physical_source_root` / `physical_target_root` and carries `roots_redacted: true` in their place, so the artifact is PII-free and safe to deliver off-box.
 
 | Field | Type | Note |
 |---|---|---|
@@ -73,6 +73,7 @@ Since #18, when `[diagnose_delivery] provider_upload_enabled = true`, the artifa
 | delivered_via_api | bool | true only on a confirmed provider-API upload |
 | delivered_via_api_url | string \| null | redaction-safe URL (file-id based), never a local path |
 | delivered_via_api_error | string \| null | classified soft-failure — config reason (`missing-folder-id`, `missing-credentials-env`, `credentials-unresolvable`, `provider-not-implemented`) or transport class (`http-401-unauthorized`, `http-403-forbidden`, `http-404-not-found`, `http-NNN`, `network`, `error:<type>`) |
+| delivery_attempts | integer | upload attempts made under the A7 bounded retry (transient failures retried with backoff; auth errors 401/403/404 stop immediately) |
 
 ## diagnose_<ts>_delivery.json  (#18 — optional local receipt)
 `schema: csm.delivery-receipt/1` — `artifact` (leaf name), `provider`, `delivered_via_api`, `delivered_via_api_url`, `delivered_via_api_error`, `finishedUtc`. Written when `[diagnose_delivery] write_receipt = true`.
@@ -93,5 +94,5 @@ The canary is a single file `.csm_roundtrip_<token>.txt` whose only content is a
 ## retire_<ts>_manifest.json  (phase retire-source, #3 — v0.5.0)
 `schema: csm.retire-manifest/1`. Records the resumable `/MOVE`: `source`, `backup`, `robocopy_exit`, `robocopy_bits`, `backup_files`, `backup_bytes`, `leftover_count`, `leftover_in_source[]` (files robocopy could not copy, left in place), `verified` (exit<8 AND zero leftovers), `log`.
 
-## state_report.json  (diagnostics)
-`{ accounts: [ { name, files, conflicts, fileStatus_dist, throttle_events, recent_error_codes } ] }` — from the sync engine's SQLite state (read-only snapshot).
+## state_report_<ts>.json  (diagnostics — read_sync_state.py)
+`{ accounts: [ { account, files, fileStatus_dist, files_in_hold_state, op_result_codes, throttle_events, conflicts, verdict, throttling_signals, ... } ] }` — from the OneDrive SyncEngine/OCSI SQLite state (read-only snapshot). `verdict` is `clean_state` \| `hard_errors_present` \| `unknown` — **fail-closed**: an unreadable DB (cloud placeholder / lock) or schema drift yields `unknown`, never `clean_state` (A4/ADR-012). `op_result_codes` is a `{resultCode -> count}` map of service-operation results; a `403` there overlaps with throttling and is not on its own an access-denied danger signal (which is why the diagnose classifier does not treat it as one).
