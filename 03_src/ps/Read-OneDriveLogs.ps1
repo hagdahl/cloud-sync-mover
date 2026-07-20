@@ -12,5 +12,10 @@ $py = (Get-Command python -EA SilentlyContinue).Source
 if (-not $py) { $py = (Get-Command py -EA SilentlyContinue).Source }
 if (-not $py) { throw "Python not found (needed to parse ODL)" }
 $report = Join-Path $wd ("odl_report_{0}.json" -f (New-CsmStamp))
-& $py (Join-Path $PSScriptRoot "..\py\parse_odl.py") $logs $MaxFiles | Tee-Object -FilePath $report
+# Capture stdout and write it with an explicit UTF-8 (no-BOM) atomic write (B8/A6). Do NOT pipe to
+# Tee-Object: Windows PowerShell 5.1 Tee writes UTF-16LE+BOM while PS7 writes UTF-8, so the report's
+# encoding would silently differ between the two supported runtimes. Also check the reader exit code.
+$json = & $py (Join-Path $PSScriptRoot "..\py\parse_odl.py") $logs $MaxFiles
+if ($LASTEXITCODE -ne 0) { throw "parse_odl.py failed (exit $LASTEXITCODE)" }
+Write-CsmAtomic $report (($json -join "`n") + "`n")
 Write-Host "ODL report -> $report"

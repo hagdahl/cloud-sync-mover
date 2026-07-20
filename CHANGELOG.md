@@ -137,3 +137,11 @@ Hardened the two Python diagnostic readers against silent failure (A4/ADR-012, B
 - Files: `03_src/py/read_sync_state.py`, `03_src/py/parse_odl.py`.
 - Rollback: `git revert` this commit.
 - Verification: fixture tests (unreadable/missing/schema-drift DB -> `unknown`; clean -> `clean_state`; hold-state -> `hard_errors_present`; parse skip warned + counted); `.py` UTF-8 no-BOM; full `Test-Toolkit.ps1` green on Windows PowerShell 5.1 and 7.
+
+## 2026-07-20 20:26 UTC - OneDrive reader wrappers: explicit UTF-8 write + exit-code check (B8/A6)
+The two OneDrive reader wrappers piped the Python readers' JSON straight to `Tee-Object -FilePath`, whose default encoding differs between the supported runtimes (Windows PowerShell 5.1 writes UTF-16LE+BOM, PowerShell 7 writes UTF-8) - a silent per-runtime encoding split (B8).
+- Both now capture stdout and write the report with an explicit UTF-8 (no-BOM) atomic write via `Write-CsmAtomic` (B8/A6), and check the reader's native exit code (`$LASTEXITCODE`) instead of assuming success.
+- `Read-OneDriveSyncState.ps1` additionally KEEPS the DB snapshot as evidence when the reader fails (previously it deleted the snapshot unconditionally, destroying the input on a failed diagnosis).
+- Files: `03_src/ps/Read-OneDriveLogs.ps1`, `03_src/ps/Read-OneDriveSyncState.ps1`.
+- Rollback: `git revert` this commit.
+- Verification: `.ps1` ASCII-only + parse-clean; full `Test-Toolkit.ps1` green on Windows PowerShell 5.1 and 7.

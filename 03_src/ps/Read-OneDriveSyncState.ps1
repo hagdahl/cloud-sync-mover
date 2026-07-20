@@ -31,6 +31,12 @@ if (-not $py) { $py = (Get-Command py -EA SilentlyContinue).Source }
 if (-not $py) { throw "Python not found (needed to read SQLite state)" }
 
 $report = Join-Path $wd ("state_report_{0}.json" -f (New-CsmStamp))
-& $py (Join-Path $PSScriptRoot "..\py\read_sync_state.py") $snap | Tee-Object -FilePath $report
+# Capture stdout and write it with an explicit UTF-8 (no-BOM) atomic write (B8/A6) instead of piping
+# to Tee-Object (UTF-16LE+BOM on Windows PowerShell 5.1 vs UTF-8 on PS7 - a silent per-runtime split).
+# Check the reader exit code, and KEEP the snapshot as evidence on failure (never destroy the input
+# on a failed diagnosis).
+$json = & $py (Join-Path $PSScriptRoot "..\py\read_sync_state.py") $snap
+if ($LASTEXITCODE -ne 0) { throw "read_sync_state.py failed (exit $LASTEXITCODE); snapshot kept at $snap" }
+Write-CsmAtomic $report (($json -join "`n") + "`n")
 if (-not $KeepSnapshot) { Remove-Item -LiteralPath $snap -Recurse -Force -EA SilentlyContinue }
 Write-Host "State report -> $report"
