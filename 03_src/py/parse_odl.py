@@ -28,6 +28,9 @@ def decompress(b):
                 break
             buf = buf[k:]
         except Exception:
+            # A truncated trailing gzip member (a live log still being written) is expected: keep
+            # what decompressed so far and stop THIS file. Bounded and intentional - not a silent
+            # whole-file drop (a fully unreadable file is caught and reported by main). (B8)
             break
     return b"".join(parts) if parts else b
 
@@ -44,11 +47,19 @@ def main():
     files = cand[:max_files]
 
     blob = bytearray()
+    parsed = 0
+    skipped = []
     for f in files:
         try:
-            blob += decompress(open(f, "rb").read())
-        except Exception:
-            pass
+            with open(f, "rb") as fh:
+                blob += decompress(fh.read())
+            parsed += 1
+        except Exception as e:
+            # B8: do not swallow silently. stdout is reserved for the JSON result, so warn on stderr
+            # and report the shortfall in the output (files_parsed vs files_attempted) so a
+            # half-scanned run does not masquerade as complete.
+            skipped.append(os.path.basename(f))
+            print("WARN: could not read %s: %r" % (os.path.basename(f), e), file=sys.stderr, flush=True)
     blob = bytes(blob)
 
     terms = ["Throttl", "Quota", "429", "403", "503", "Conflict", "Blocked",
@@ -64,7 +75,9 @@ def main():
     throttling = (term_counts["429"] > 0 or term_counts["403"] > 0
                   or term_counts["Throttl"] > 0 or term_counts["ProcessQuotaThrottleWarningHeader"] > 0)
     out = {
-        "files_scanned": len(files),
+        "files_attempted": len(files),
+        "files_parsed": parsed,
+        "files_skipped": skipped,
         "newest": os.path.basename(files[0]) if files else None,
         "decompressed_kb": len(blob) // 1024,
         "term_counts": term_counts,
@@ -77,4 +90,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("interrupted", file=sys.stderr, flush=True)
+        sys.exit(130)

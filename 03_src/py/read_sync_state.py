@@ -10,6 +10,9 @@ except Exception:
 
 
 def q(cur, sql):
+    # Returns the rows on success, or None when the query itself failed (missing table / schema
+    # drift / unreadable DB). None means "could not read", NOT "zero rows" - the caller must fail
+    # closed on None rather than treat it as 0 (A4 / ADR-012).
     try:
         return cur.execute(sql).fetchall()
     except Exception:
@@ -53,7 +56,18 @@ def read_account(db_dir):
     throttled = any(k in ("429", "403", "503") for k in codes) or bool(out.get("throttle_events"))
     hard = (out.get("conflicts") or 0) or (out.get("files_in_hold_state") or 0) \
         or (out.get("od_CreateAddedFolderFailures") or 0) or (out.get("od_UnrealizedFile_Records") or 0)
-    out["verdict"] = "hard_errors_present" if hard else "clean_state"
+    # Fail closed (A4 / ADR-012): "clean_state" must rest on a POSITIVE read, not on the mere
+    # absence of signals. If the SyncEngine DB is missing or a count query failed (out["files"] is
+    # None), or either DB raised (syncengine_error / ocsi_error), we could not have SEEN hard errors
+    # even if they exist -> report "unknown", never "clean_state".
+    read_error = ("syncengine_error" in out) or ("ocsi_error" in out)
+    se_readable = os.path.exists(se) and (out.get("files") is not None)
+    if read_error or not se_readable:
+        out["verdict"] = "unknown"
+    elif hard:
+        out["verdict"] = "hard_errors_present"
+    else:
+        out["verdict"] = "clean_state"
     out["throttling_signals"] = bool(throttled)
     return out
 
@@ -75,4 +89,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("interrupted", file=sys.stderr, flush=True)
+        sys.exit(130)

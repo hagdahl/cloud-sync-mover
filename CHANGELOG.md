@@ -128,3 +128,12 @@ When the sync client is the broken part, the diagnose report about it cannot tra
 - Files: `03_src/ps/_common.ps1` (+3 helpers), `Invoke-CsmDiagnose.ps1`, `config.example` (`[diagnose_delivery]`), `00_admin/DECISIONS.md` (ADR-014), `README.md`, `01_docs/ARCHITECTURE.md`, `01_docs/USER_GUIDE.md` ("Delivering the diagnostic when the client is broken"), `01_docs/DATA-FORMATS.md`, `04_tests/validation/Test-Toolkit.ps1` (+14 checks incl. a no-token-leak assert and the disabled-default no-op trap).
 - Rollback: `git revert` this commit (or just leave `provider_upload_enabled = false` - the default path is a no-op).
 - Verification: full smoke suite green on Windows PowerShell 5.1 and 7 before push (happy path against a loopback TCP mock - no real provider touched); `.ps1` ASCII-only + parse-clean.
+
+## 2026-07-20 20:25 UTC - Fail-closed OneDrive readers + no-silent-failure ODL parse (A4/B8)
+Hardened the two Python diagnostic readers against silent failure (A4/ADR-012, B8). No move/verify behavior changed.
+- **read_sync_state.py (A4 fail-closed):** the per-account verdict is now `unknown` (never `clean_state`) when the SyncEngine DB is missing/unreadable (cloud placeholder, lock) or a count query fails (schema drift) - "clean_state" must rest on a positive read, not on the absence of signals. `q()` documents that `None` means "could not read", not "zero rows".
+- **parse_odl.py (B8):** an unreadable ODL file is no longer swallowed by a bare `except: pass`; it is warned to stderr (stdout stays reserved for JSON) and the output reports `files_parsed` / `files_skipped[]` vs `files_attempted` instead of a misleading `files_scanned`. The intentional truncated-gzip skip now carries an explicit justification.
+- **Both:** graceful `KeyboardInterrupt` (stderr message + exit 130), not a raw traceback.
+- Files: `03_src/py/read_sync_state.py`, `03_src/py/parse_odl.py`.
+- Rollback: `git revert` this commit.
+- Verification: fixture tests (unreadable/missing/schema-drift DB -> `unknown`; clean -> `clean_state`; hold-state -> `hard_errors_present`; parse skip warned + counted); `.py` UTF-8 no-BOM; full `Test-Toolkit.ps1` green on Windows PowerShell 5.1 and 7.
