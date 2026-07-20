@@ -423,7 +423,7 @@ function Get-CsmDiagnoseHealth {
 }
 
 # ---------------------------------------------------------------------------
-# v0.6.0-wip additions: sync-mount staging-queue scan (#16). The client cache
+# v0.6.0 additions: sync-mount staging-queue scan (#16). The client cache
 # says nothing about a stuck staging dir ON THE MOUNT ITSELF - the field case
 # (2026-07-19 lesson) where an undeletable .tmp.driveupload on one mirror root
 # blocked ALL mirror upsync while every cache-side signal stayed quiet.
@@ -565,7 +565,7 @@ function Get-CsmMountStageQueues {
     return $out.ToArray()
 }
 # ---------------------------------------------------------------------------
-# v0.6.0-wip additions: diagnose-artifact delivery past a broken sync client
+# v0.6.0 additions: diagnose-artifact delivery past a broken sync client
 # (#18, ADR-014). Opt-in and config-gated; credentials only as the NAME of an
 # env var (A2/B13); soft-fail with a classified outcome (B8).
 # ---------------------------------------------------------------------------

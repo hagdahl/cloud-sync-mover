@@ -1,6 +1,6 @@
 # CHANGELOG
 
-> Version 0.5.1
+> Version 0.6.0
 
 Format: date - change - rollback.
 
@@ -168,3 +168,13 @@ A7 requires all automation to be stoppable in one sweep, but `stop_all_jobs.ps1`
 - Files: `03_src/ps/Read-GoogleDriveLogs.ps1`.
 - Rollback: `git revert` this commit.
 - Verification: `.ps1` ASCII-only + parse-clean; full `Test-Toolkit.ps1` green on Windows PowerShell 5.1 and 7.
+
+## 2026-07-20 20:55 UTC - v0.6.0: release (conformance pass on #16/#17/#18; aligned to standard v0.62)
+Cuts v0.6.0, closing the release status (A5) for the #16/#17/#18 work committed after v0.5.1 but left unreleased (the code carried `v0.6.0-wip` markers). No new feature; this release is the 2026-07-20 conformance pass plus release-closure housekeeping.
+- **Contents since v0.5.1:** #16 (stuck staging-queue scan), #17 (SOURCE_STAGE_QUEUE_STUCK preflight gate), #18 (opt-in diagnose-artifact delivery), the 2026-07-19 field-incident lesson, and the 2026-07-20 conformance fixes - A2 (redact the #18-delivered artifact), A4 (fail-closed readers + dead-field fix), A7 (bounded-retry delivery + emergency-stop watchdog), B8 (encoding).
+- **Standard alignment:** brought to `cowork-project-instructions` v0.62. v0.62 introduces NO new PART A/PART B principle vs the v0.61 the code was last aligned to (A1-A7/B1-B14 unchanged in count); its A5 release-lifecycle tightening (a release is not done until its changelog status is closed) is satisfied by this entry + the v0.6.0 tag.
+- **Publishability:** unchanged at level 2/3 (ADR-013) - safe to publish; the tracked surface stays de-identified and PII-free (A2), with generated output and `_sources/` held back by `.gitignore`.
+- **Finalization:** `03_src/ps/_common.ps1` `v0.6.0-wip` markers -> `v0.6.0`; CHANGELOG version header 0.5.1 -> 0.6.0.
+- Files: `03_src/ps/_common.ps1` (comment markers only), `CHANGELOG.md`.
+- Rollback: `git tag -d v0.6.0` then `git reset --hard v0.5.1` (or `git revert` this commit). No behavior change in this commit.
+- Verification: full `Test-Toolkit.ps1` green on Windows PowerShell 5.1 and 7 at this commit; `.ps1` ASCII-only + parse-clean; `.md`/`.py` UTF-8 no-BOM; PII scan clean on the tracked surface (only the author's own identity in LICENSE/README, per ADR-007).
