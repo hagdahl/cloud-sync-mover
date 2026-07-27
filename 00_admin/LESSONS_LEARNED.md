@@ -2,6 +2,22 @@
 
 Append-only. Newest on top. Distilled and de-identified from two real migrations (Google Drive mirror, OneDrive Personal). Unscrubbed originals in `_sources/`.
 
+## 2026-07-27 — Which layer denies `unlink`, cloud-only dev-artifact bloat, and a scoped provider-API sweep
+
+Follow-on to the 2026-07-19/20 mirror-upsync incident: clearing developer trees out of a mirror. Three new lessons, two reinforced.
+
+- **When `unlink` fails inside a synced folder, isolate the execution layer before blaming the provider.** A repeated `Operation not permitted` on delete — breaking Git, which unlinks its own lock/temp files — read as a provider permission or Controlled-Folder-Access block. A native delete test run the same moment in three places (the synced mirror, a non-synced folder on the *same* physical disk, and the OS temp dir) succeeded in all three. The block was a **remote-execution bridge's mount layer** (it can `rename` but not `unlink`), not the mirror. The create-yes / rename-yes / delete-no asymmetry is that bridge's behaviour, not the provider's. *Lesson:* a delete failure observed *through* a tool is not evidence about the target filesystem; a same-run differential across synced / non-synced-same-disk / OS-temp pins the layer even when every probe runs through the same tool — then run the definitive delete natively. (B14 — execution env is not the target env; the delete-side twin of #18.)
+
+- **Dependency / venv / build bloat can be cloud-only, and a local `rm` cannot reach it.** After the client was unblocked, *no* dependency folders existed on local disk — yet the provider held dozens (uploaded in one earlier batch) pending re-download into the mirror. Those pending downloads *are* the recurring hashing-queue bloat, but there is nothing on disk to delete; removing them needs the provider API, not the mount. *Lesson:* dev-folder cleanup must handle the cloud-only case — in mirror mode the cloud copy re-seeds the local one, so a local-only cleanup is undone on the next sync pass. (B3 / B14.)
+
+- **A provider name-search is token-loose; bound the trash set to a scope and collapse nested matches to the topmost.** Searching names for `node_modules/.venv/build/dist/...` returned **1 485** hits — most nested *inside* the dependency trees, plus false positives from loose `contains` tokenisation (fonts named "Distort", preset folders, `build` dirs in unrelated computer-backup roots). Two rules cut that to **6** real targets: keep only the **topmost** match of a subtree (trashing a `node_modules` cascades everything inside it), and **bound** the set to descendants of the known projects folder — *report but never touch* matches outside it. *Lesson:* an API sweep over a loose search must dedupe by subtree and constrain by an explicit scope id, then dry-run the resolved paths for operator approval before trashing — never act off the raw query. (A1 / A3.)
+
+- **API-trash of user-owned items is a higher privilege than API-delivery — keep it a separate token.** Delivering a diagnostic via the provider API (#18) needs only the file-scoped write grant (the app touches files it created). Trashing folders the app did not create needs the full drive scope. *Lesson:* consent that scope as a distinct token, store it outside the repo and the sync mount, lock it to the operator, and let them revoke it once the sweep is done. (B3 — least-privilege, offsite credential.)
+
+- **Reinforced — a staging queue's logical size is not reclaimable space.** Deleting a large `.tmp.driveupload` freed essentially nothing: its entries were hardlinks / placeholders sharing bytes with the originals. The reclaimable-space estimate must not equate a staging dir's logical size with freeable bytes. (A4 — the number lies, again.)
+
+- **Reinforced — whole-root removal is the only exclusion lever, and it unblocks a stuck init.** When the client hangs on "loading account" because a multi-TB *backup* root is enumerating, a guarded delete of that root's `is_my_drive=0` row in `root_preference_sqlite.db` (client stopped, config backed up first) unblocks initialisation without touching local source data. There is no subfolder-level exclusion inside a mirror. (B14 / A3.)
+
 ## 2026-07-20 — Field validation of #16/#18, and a monitoring bridge that depended on the diagnosed client
 
 The mirror-upsync block from the 2026-07-19 entry was independently tracked for about five days by an external, hourly, memoryless watch process reading a shared cloud folder. Three lessons confirmed themselves in the field.
@@ -53,3 +69,4 @@ Observed in a live mirror deployment where new writes into a sync-mount subfolde
 - **Targeted search, not a recursive enum of the whole root.** A full `EnumerateFiles` over the synced root can be enormous (millions of online-only placeholders) and time out when you are only looking for one file or one account. Search targeted against known subfolders.
 - **Free disk space as a progress/threshold measure.** On a slow disk (SMR), counting is sluggish; the delta in the target's used space is a robust, cheap progress and threshold measure (the basis of `Watch-TargetGrowth.ps1`).
 - **The state DB snapshot is large — clean up.** A snapshot can be several GB (DB + large WAL). Write to local disk and delete afterward, otherwise the diagnostics eat up the very disk you are trying to free.
+
