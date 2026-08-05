@@ -2,6 +2,15 @@
 
 Append-only. Newest on top. Distilled and de-identified from two real migrations (Google Drive mirror, OneDrive Personal). Unscrubbed originals in `_sources/`.
 
+## 2026-08-04 — Junction-relocated mirror: a re-scan looks worse mid-run, and peel-the-onion
+
+Follow-on to the 2026-07 mirror-upsync incident: cleaning a jammed mirror whose root is a junction to another volume.
+
+- **A jammed mirror client's restart triggers a full re-scan that TRANSIENTLY spreads the fault before it settles — and each restart resets the settling.** After removing the single folder blocking the merge queue and restarting, the re-scan reached the whole backlog and the containment-failure count went from 1 -> hundreds of distinct paths, then fell back to 1 over ~20 h as the client re-recorded paths correctly. Do not judge a re-scan in its first minutes/hours, and do not repeatedly restart a client that is settling — each restart re-triggers the expensive re-index (worst on an SMR archive disk). "Looks worse right after restart" is not "made it worse." (A4 — the first-look/counter lies; couples the detached-long-job don't-judge-mid-run discipline.)
+- **Removing the first blocker in a merge-queue loop unblocks the queue and reveals the next-worst — peel-the-onion.** A single-item loop can MASK a broader latent fault of the same class; fixing the visible blocker exposes (not creates) the true scope. Know what is queued behind a blocker before removing it. (A1 / A3.)
+- **Consistency-before-restart deletes cleanly from a mirror.** Client OFF -> make local and cloud agree (move the local folder out AND trash the cloud copy via the provider API) -> restart into the consistent state -> no re-trash loop, no mass-trash. Validates the migration lesson's "start the client only when cloud AND local are consistent." (B14.)
+- **A hung metadata-store WAL clears on a clean restart** (drained from ~500 MB to single-digit MB), **but a restart does NOT fix a path-containment / root mismatch** — that needs the root itself corrected. The restart is a valid remedy for the hung WAL and a dead end for the root cause; classify the two symptoms apart. (A4 / B8.)
+
 ## 2026-07-27 — Which layer denies `unlink`, cloud-only dev-artifact bloat, and a scoped provider-API sweep
 
 Follow-on to the 2026-07-19/20 mirror-upsync incident: clearing developer trees out of a mirror. Three new lessons, two reinforced.
